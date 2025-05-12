@@ -1,41 +1,61 @@
-import { NextResponse } from 'next/server';
-import { MongoClient } from 'mongodb';
+import { NextRequest, NextResponse } from 'next/server';
 
-const uri = process.env.MONGODB_URI || '';
-const client = new MongoClient(uri);
+interface ProviderInput {
+  name: string;
+  type: string;
+  defaultValue: string;
+  description: string;
+}
 
-export async function POST(request: Request) {
-  const { provider, inputs } = await request.json();
+interface Provider {
+  name: string;
+  inputs: ProviderInput[];
+}
 
-  // Validate inputs
-  if (!provider || !inputs || !Object.keys(inputs).length) {
-    return NextResponse.json({ error: 'Invalid provider or inputs' }, { status: 400 });
-  }
+interface CalculateRequest {
+  provider: Provider;
+  inputs: Record<string, string>;
+}
 
+export async function POST(request: NextRequest) {
   try {
-    await client.connect();
-    const db = client.db('pricing');
-    const providersCollection = db.collection('providers');
+    const { provider, inputs }: CalculateRequest = await request.json();
+    console.log('POST /api/calculate received:', { provider, inputs });
 
-    // Verify provider exists and inputs match
-    const providerData = await providersCollection.findOne({ name: provider });
-    if (!providerData) {
-      return NextResponse.json({ error: 'Provider not found' }, { status: 404 });
+    if (!provider || !provider.name || !provider.inputs) {
+      return NextResponse.json({ error: 'Invalid provider data' }, { status: 400 });
+    }
+    if (!inputs || typeof inputs !== 'object') {
+      return NextResponse.json({ error: 'Invalid input values' }, { status: 400 });
     }
 
-    const missingFields = providerData.inputs.filter((field: any) => !inputs[field.name]);
-    if (missingFields.length > 0) {
-      return NextResponse.json(
-        { error: `Missing fields: ${missingFields.map((f: any) => f.label).join(', ')}` },
-        { status: 400 }
-      );
+    // Simple pricing calculation (customize based on your needs)
+    const results: Record<string, number> = {};
+    for (const input of provider.inputs) {
+      const value = parseFloat(inputs[input.name] || input.defaultValue);
+      if (isNaN(value)) {
+        return NextResponse.json({ error: `Invalid value for ${input.name}` }, { status: 400 });
+      }
+      // Example: Assume cost is $0.01 per unit (adjust as needed)
+      results[input.name] = value * 0.01;
     }
 
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error('MongoDB error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
-  } finally {
-    await client.close();
+    const totalCost = Object.values(results).reduce((sum, cost) => sum + cost, 0);
+
+    return NextResponse.json(
+      {
+        provider: provider.name,
+        inputs,
+        results,
+        totalCost,
+      },
+      { status: 200 }
+    );
+  } catch (error: any) {
+    console.error('POST /api/calculate error:', error);
+    return NextResponse.json(
+      { error: `Failed to calculate cost: ${error.message || 'Unknown error'}` },
+      { status: 500 }
+    );
   }
 }
