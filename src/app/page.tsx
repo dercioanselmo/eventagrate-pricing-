@@ -13,22 +13,21 @@ interface ProviderInput {
 }
 
 interface Provider {
+  _id: string;
   name: string;
   inputs: ProviderInput[];
 }
 
-interface Calculation {
-  provider: string;
-  inputs: Record<string, string>;
-  results: Record<string, number>;
-  totalCost: number;
+interface SelectedProvider {
+  provider: Provider;
+  inputs: { [key: string]: string };
 }
 
 export default function Home() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
-  const [inputValues, setInputValues] = useState<Record<string, string>>({});
-  const [calculations, setCalculations] = useState<Calculation[]>([]);
+  const [inputs, setInputs] = useState<{ [key: string]: string }>({});
+  const [selectedProviders, setSelectedProviders] = useState<SelectedProvider[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -46,53 +45,77 @@ export default function Home() {
     fetchProviders();
   }, []);
 
-  const handleProviderChange = (name: string) => {
-    const provider = providers.find((p) => p.name === name) || null;
+  const handleProviderChange = (providerName: string) => {
+    const provider = providers.find((p) => p.name === providerName) || null;
     setSelectedProvider(provider);
     if (provider) {
       const initialInputs = provider.inputs.reduce((acc, input) => {
-        acc[input.name] = input.defaultValue;
+        acc[input.name] = input.defaultValue || '';
         return acc;
-      }, {} as Record<string, string>);
-      setInputValues(initialInputs);
+      }, {} as { [key: string]: string });
+      setInputs(initialInputs);
     } else {
-      setInputValues({});
+      setInputs({});
     }
   };
 
   const handleInputChange = (name: string, value: string) => {
-    setInputValues((prev) => ({ ...prev, [name]: value }));
+    setInputs((prev) => ({ ...prev, [name]: value }));
   };
 
   const handleAddProvider = async () => {
-    console.log('handleAddProvider called:', { selectedProvider, inputValues });
     if (!selectedProvider) {
       setError('Please select a provider.');
-      console.log('Error: No provider selected');
       return;
     }
-    if (!inputValues || Object.keys(inputValues).length === 0) {
-      setError('Please provide input values.');
-      console.log('Error: No input values provided');
+
+    // Validate inputs
+    const missingInputs = selectedProvider.inputs.filter(
+      (input) => !inputs[input.name] && input.defaultValue === ''
+    );
+    if (missingInputs.length > 0) {
+      setError(`Please provide values for: ${missingInputs.map((i) => i.name).join(', ')}`);
       return;
     }
 
     try {
-      console.log('Sending to /api/calculate:', { provider: selectedProvider, inputs: inputValues });
+      // Send request to /api/calculate
       const response = await axios.post('/api/calculate', {
         provider: selectedProvider,
-        inputs: inputValues,
+        inputs,
       });
-      setCalculations((prev) => [...prev, response.data]);
+
+      setSelectedProviders((prev) => [
+        ...prev,
+        { provider: selectedProvider, inputs: { ...inputs } },
+      ]);
+      setSelectedProvider(null);
+      setInputs({});
       setError('');
     } catch (err: any) {
-      setError('Error calculating cost: ' + (err.response?.data?.error || 'Unknown error'));
-      console.error('handleAddProvider error:', err.response?.data || err);
+      console.error('handleAddProvider error:', err);
+      const errorMessage =
+        err.response?.data?.error || err.message || 'Error adding provider. Please try again.';
+      setError(errorMessage);
     }
   };
 
-  const handleRemoveCalculation = (index: number) => {
-    setCalculations((prev) => prev.filter((_, i) => i !== index));
+  const handleRemoveProvider = (index: number) => {
+    setSelectedProviders((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleGenerateReport = async () => {
+    if (selectedProviders.length === 0) {
+      setError('Please add at least one provider.');
+      return;
+    }
+
+    try {
+      const response = await axios.post('/api/report', { providers: selectedProviders });
+      alert('Report generated: ' + JSON.stringify(response.data));
+    } catch (err) {
+      setError('Error generating report. Please try again.');
+    }
   };
 
   if (loading) {
@@ -114,85 +137,81 @@ export default function Home() {
       )}
 
       {/* Provider Selection */}
-      <div className="mb-4">
-        <label className="block text-sm font-medium">Select Provider</label>
+      <div className="mb-8">
+        <h2 className="text-xl font-semibold mb-2">Select Provider</h2>
         <select
-          className="mt-1 p-2 border rounded w-full"
-          onChange={(e) => handleProviderChange(e.target.value)}
+          className="p-2 border rounded w-full mb-4"
           value={selectedProvider?.name || ''}
+          onChange={(e) => handleProviderChange(e.target.value)}
         >
           <option value="">Select a provider</option>
           {providers.map((provider) => (
-            <option key={provider.name} value={provider.name}>
+            <option key={provider._id} value={provider.name}>
               {provider.name}
             </option>
           ))}
         </select>
+
+        {selectedProvider && (
+          <div>
+            <h3 className="text-lg font-medium mb-2">Inputs for {selectedProvider.name}</h3>
+            {selectedProvider.inputs.map((input) => (
+              <div key={input.name} className="mb-4">
+                <label className="block text-sm font-medium">{input.name}</label>
+                {input.description && (
+                  <div
+                    className="text-sm text-gray-600 mb-1 prose"
+                    dangerouslySetInnerHTML={{
+                      __html: DOMPurify.sanitize(input.description),
+                    }}
+                  />
+                )}
+                <input
+                  type={input.type === 'number' ? 'number' : 'text'}
+                  className="p-2 border rounded w-full"
+                  value={inputs[input.name] || ''}
+                  onChange={(e) => handleInputChange(input.name, e.target.value)}
+                  placeholder={input.defaultValue || ''}
+                />
+              </div>
+            ))}
+            <button
+              className="bg-blue-500 text-white p-2 rounded hover:bg-blue-600"
+              onClick={handleAddProvider}
+            >
+              Add Provider
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Input Fields */}
-      {selectedProvider && (
-        <div className="mb-4">
-          <h2 className="text-xl font-semibold mb-2">{selectedProvider.name} Inputs</h2>
-          {selectedProvider.inputs.map((input) => (
-            <div key={input.name} className="mb-4">
-              <label className="block text-sm font-medium">{input.name}</label>
-              <input
-                type={input.type === 'number' ? 'number' : 'text'}
-                className="mt-1 p-2 border rounded w-full"
-                value={inputValues[input.name] || ''}
-                onChange={(e) => handleInputChange(input.name, e.target.value)}
-              />
-              {input.description && (
-                <div
-                  className="mt-2 prose"
-                  dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(input.description) }}
-                />
-              )}
-            </div>
-          ))}
-          <button
-            className="bg-blue-500 text-white p-2 rounded hover:bg-blue-600"
-            onClick={handleAddProvider}
-          >
-            Add Provider
-          </button>
-        </div>
-      )}
-
-      {/* Calculations Table */}
-      {calculations.length > 0 && (
-        <div className="mb-4">
-          <h2 className="text-xl font-semibold mb-2">Calculations</h2>
+      {/* Selected Providers Table */}
+      <div className="mb-8">
+        <h2 className="text-xl font-semibold mb-2">Selected Providers</h2>
+        {selectedProviders.length === 0 ? (
+          <p>No providers selected.</p>
+        ) : (
           <table className="w-full border-collapse border">
             <thead>
               <tr>
-                <th className="border p-2">Provider</th>
+                <th className="border p-2">Provider Name</th>
                 <th className="border p-2">Inputs</th>
-                <th className="border p-2">Results</th>
-                <th className="border p-2">Total Cost</th>
                 <th className="border p-2">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {calculations.map((calc, index) => (
+              {selectedProviders.map((sp, index) => (
                 <tr key={index}>
-                  <td className="border p-2">{calc.provider}</td>
+                  <td className="border p-2">{sp.provider.name}</td>
                   <td className="border p-2">
-                    {Object.entries(calc.inputs)
-                      .map(([name, value]) => `${name}: ${value}`)
+                    {Object.entries(sp.inputs)
+                      .map(([key, value]) => `${key}: ${value}`)
                       .join(', ')}
                   </td>
-                  <td className="border p-2">
-                    {Object.entries(calc.results)
-                      .map(([name, value]) => `${name}: $${value.toFixed(2)}`)
-                      .join(', ')}
-                  </td>
-                  <td className="border p-2">${calc.totalCost.toFixed(2)}</td>
                   <td className="border p-2">
                     <button
                       className="bg-red-500 text-white p-1 rounded hover:bg-red-600"
-                      onClick={() => handleRemoveCalculation(index)}
+                      onClick={() => handleRemoveProvider(index)}
                     >
                       Remove
                     </button>
@@ -201,8 +220,16 @@ export default function Home() {
               ))}
             </tbody>
           </table>
-        </div>
-      )}
+        )}
+      </div>
+
+      {/* Generate Report */}
+      <button
+        className="bg-green-500 text-white p-2 rounded hover:bg-green-600"
+        onClick={handleGenerateReport}
+      >
+        Generate Report
+      </button>
 
       <style jsx>{`
         .prose {
