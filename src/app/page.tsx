@@ -302,9 +302,8 @@ export default function Home() {
           font-weight: 600;
           text-align: left !important;
         }
-        .prose h2 {
-          margin-top: 24px;
-          margin-bottom: 16px;
+        .prose table thead th {
+          text-align: left !important;
         }
         .prose tr:nth-child(even) {
           background-color: #f9fafb;

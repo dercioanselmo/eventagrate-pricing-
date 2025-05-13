@@ -27,14 +27,14 @@ interface ReportRequest {
 // Fallback table generator if Grok doesn't provide valid Markdown tables
 const generateFallbackTable = (provider: SelectedProvider, pricingUrl: string): string => {
   const rows = Object.entries(provider.inputs)
-    .map(([key, value]) => `| ${key} | ${value} | Unknown | Unknown | - |`)
+    .map(([key, value]) => `| ${key} | ${value} | Unknown | Unknown | - | ${pricingUrl} |`)
     .join('\n');
   return `
 ## Provider: ${provider.provider.name}
-| Input | Value | Original Price (USD) | Estimated Cost (USD) | Cost Calculation |
-|-------|-------|----------------------|----------------------|------------------|
+| Input | Value | Original Price (USD) | Estimated Cost (USD) | Cost Calculation | Pricing Source URL |
+|-------|-------|----------------------|----------------------|------------------|--------------------|
 ${rows}
-| Total | - | - | Unknown | - |
+| Total | - | - | Unknown | - | - |
 For exact pricing, see: ${pricingUrl}
 
 `;
@@ -56,22 +56,23 @@ export async function POST(request: NextRequest) {
       return `${item.provider.name}: Inputs=${JSON.stringify(item.inputs)}`;
     }).join('\n');
 
-    // Prompt Grok for structured tables with cost calculation
-    const prompt = `You are a cloud cost estimation expert. Based on the following provider inputs, estimate the monthly costs for each provider. If exact pricing is unavailable, indicate the provider's pricing page URL.
+    // Prompt Grok for structured tables with detailed pricing URLs
+    const prompt = `You are a cloud cost estimation expert. Based on the following provider inputs, estimate the monthly costs for each provider. Use consistent pricing from the provider's most specific pricing page available, ensuring the URL points to the detailed pricing for the service or tier (e.g., for Mongo Atlas, use a page specific to AWS cluster pricing like https://www.mongodb.com/products/platform/atlas-cloud-providers/aws/pricing, not a generic page like https://www.mongodb.com/pricing; for AWS RDS, use https://aws.amazon.com/rds/pricing/). If exact pricing or a specific URL is unavailable, use the provider's general pricing page and note it.
 
 Inputs:
 ${summary}
 
 Generate a report in Markdown format with:
-- A separate table for each provider with columns: Input, Value, Original Price (USD), Estimated Cost (USD), Cost Calculation.
-  - Original Price: The provider's standard list price (e.g., $0.10/GB).
-  - Estimated Cost: The calculated cost based on inputs (e.g., adjusted for usage).
-  - Cost Calculation: A short description of how the Estimated Cost was calculated (e.g., "$0.08/hour × 730 hours") for rows with a non-zero or non-"Included" Estimated Cost; otherwise, use "-".
-  - Include a final row in each table with the total estimated cost: | Total | - | - | $X.XX | - |.
+- A separate table for each provider with columns: Input, Value, Original Price (USD), Estimated Cost (USD), Cost Calculation, Pricing Source URL.
+  - Original Price: The provider's standard list price (e.g., $0.08/hour for Mongo Atlas M10).
+  - Estimated Cost: The calculated cost based on inputs, using consistent pricing for each run.
+  - Cost Calculation: A short, precise mathematical expression (e.g., "$0.08/hour × 730 hours") for rows with a non-zero or non-"Included" Estimated Cost; otherwise, use "-".
+  - Pricing Source URL: The most specific URL of the pricing page used for the Original Price (e.g., a Mongo Atlas page detailing AWS cluster pricing, or an AWS RDS page for instance pricing). Prefer detailed URLs over generic ones.
+  - Include a final row in each table with the total estimated cost: | Total | - | - | $X.XX | - | - |.
 - For multiple providers, include a totals table with columns: Provider, Original Price (USD), Estimated Cost (USD), summarizing each provider's totals and a grand total in the last row.
-- Use only Markdown table syntax (e.g., | Input | Value | Original Price | Estimated Cost | Cost Calculation |).
+- Use only Markdown table syntax (e.g., | Input | Value | Original Price | Estimated Cost | Cost Calculation | Pricing Source URL |).
 - Include headers: ## Provider: <Name> for provider tables, ## Totals for the totals table.
-- At the end, add a ## Notes section listing the pricing source URLs as plain text (e.g., - Mongo Atlas: https://www.mongodb.com/pricing). Do not use Markdown hyperlinks.
+- At the end, add a ## Notes section listing the pricing source URLs as plain text, matching the specific URLs used in the tables (e.g., - Mongo Atlas: <specific-url>). Do not use Markdown hyperlinks.
 - Format prices as $X.XX (e.g., $123.45).
 - Do not include cost optimization recommendations.
 - Use only Markdown tables, no other formats.`;
@@ -95,7 +96,7 @@ Generate a report in Markdown format with:
           { role: 'system', content: 'You are a cloud cost estimation expert.' },
           { role: 'user', content: prompt },
         ],
-        temperature: 0.2,
+        temperature: 0, // Set to 0 for deterministic responses
         max_tokens: 1500,
       },
       {
@@ -113,9 +114,10 @@ Generate a report in Markdown format with:
     if (!hasTables) {
       console.warn('Grok response lacks valid Markdown tables, generating fallback');
       reportText = body.providers
-        .map((provider) =>
-          generateFallbackTable(provider, `https://www.${provider.provider.name.toLowerCase().replace(/\s+/g, '')}.com/pricing`)
-        )
+        .map((provider) => {
+          const defaultUrl = `https://www.${provider.provider.name.toLowerCase().replace(/\s+/g, '')}.com/pricing`;
+          return generateFallbackTable(provider, defaultUrl);
+        })
         .join('\n');
       if (body.providers.length > 1) {
         reportText += `
