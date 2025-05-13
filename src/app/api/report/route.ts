@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
       return `${item.provider.name}: Inputs=${JSON.stringify(item.inputs)}`;
     }).join('\n');
 
-    // Prompt Grok for structured tables
+    // Prompt Grok for structured tables with plain text URLs
     const prompt = `You are a cloud cost estimation expert. Based on the following provider inputs, estimate the monthly costs for each provider. If exact pricing is unavailable, indicate the provider's pricing page URL.
 
 Inputs:
@@ -70,7 +70,7 @@ Generate a report in Markdown format with:
 - For multiple providers, include a totals table with columns: Provider, Original Price (USD), Estimated Cost (USD), summarizing each provider's totals and a grand total in the last row.
 - Use only Markdown table syntax (e.g., | Input | Value | Original Price | Estimated Cost |).
 - Include headers: ## Provider: <Name> for provider tables, ## Totals for the totals table.
-- At the end, add a ## Notes section listing the pricing source URLs (e.g., - Mongo Atlas: https://www.mongodb.com/pricing).
+- At the end, add a ## Notes section listing the pricing source URLs as plain text (e.g., - Mongo Atlas: https://www.mongodb.com/pricing). Do not use Markdown hyperlinks.
 - Format prices as $X.XX (e.g., $123.45).
 - Do not include cost optimization recommendations.
 - Use only Markdown tables, no other formats.`;
@@ -95,7 +95,7 @@ Generate a report in Markdown format with:
           { role: 'user', content: prompt },
         ],
         temperature: 0.2,
-        max_tokens: 1500, // Increased to accommodate tables and notes
+        max_tokens: 1500,
       },
       {
         headers: {
