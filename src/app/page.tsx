@@ -28,6 +28,7 @@ export default function Home() {
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
   const [inputs, setInputs] = useState<{ [key: string]: string }>({});
   const [selectedProviders, setSelectedProviders] = useState<SelectedProvider[]>([]);
+  const [report, setReport] = useState<string>(''); // New state for report
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -79,7 +80,6 @@ export default function Home() {
     }
 
     try {
-      // Send request to /api/calculate
       const response = await axios.post('/api/calculate', {
         provider: selectedProvider,
         inputs,
@@ -112,9 +112,15 @@ export default function Home() {
 
     try {
       const response = await axios.post('/api/report', { providers: selectedProviders });
-      alert('Report generated: ' + JSON.stringify(response.data));
-    } catch (err) {
-      setError('Error generating report. Please try again.');
+      // Assume response.data.report contains HTML or plain text
+      const reportContent = response.data.report || JSON.stringify(response.data);
+      setReport(DOMPurify.sanitize(reportContent)); // Sanitize and store report
+      setError('');
+    } catch (err: any) {
+      console.error('handleGenerateReport error:', err);
+      setError(
+        err.response?.data?.error || err.message || 'Error generating report. Please try again.'
+      );
     }
   };
 
@@ -220,6 +226,19 @@ export default function Home() {
               ))}
             </tbody>
           </table>
+        )}
+      </div>
+
+      {/* Report Section */}
+      <div className="mb-8">
+        <h2 className="text-xl font-semibold mb-2">Cost Report</h2>
+        {report ? (
+          <div
+            className="border rounded p-4 prose"
+            dangerouslySetInnerHTML={{ __html: report }}
+          />
+        ) : (
+          <p>No report generated yet.</p>
         )}
       </div>
 
