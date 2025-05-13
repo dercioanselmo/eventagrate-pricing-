@@ -40,19 +40,22 @@ export async function POST(request: NextRequest) {
       return `${item.provider.name}: Inputs=${JSON.stringify(item.inputs)}`;
     }).join('\n');
 
-    // Prompt Grok for tables
+    // Prompt Grok for tables with original and estimated costs
     const prompt = `You are a cloud cost estimation expert. Based on the following provider inputs, estimate the monthly costs for each provider and provide a total cost. If exact pricing is unavailable, indicate where to find it (e.g., provider's pricing page). Do not include cost optimization recommendations.
 
 Inputs:
 ${summary}
 
 Generate a report in Markdown format with:
-- A separate table for each provider with columns: Input, Value, Estimated Cost (in USD).
-- For multiple providers, include a final table with columns: Provider, Total Cost (in USD).
-- Use Markdown table syntax (e.g., | Input | Value | Estimated Cost |).
+- A separate table for each provider with columns: Input, Value, Original Price (USD), Estimated Cost (USD).
+  - Original Price: The provider's standard list price for the input (e.g., base price per GB or hour).
+  - Estimated Cost: The calculated cost based on inputs (e.g., adjusted for usage duration or quantity).
+- For multiple providers, include a final table with columns: Provider, Original Price (USD), Estimated Cost (USD), summarizing totals for each provider and a grand total.
+- Use Markdown table syntax (e.g., | Input | Value | Original Price | Estimated Cost |).
 - Include headers like ## Provider: <Name> before each provider table and ## Totals before the totals table.
-- Format costs as $X.XX (e.g., $123.45).
-- If pricing is unavailable, note the provider's pricing page URL.`;
+- Format prices as $X.XX (e.g., $123.45).
+- If pricing is unavailable, note the provider's pricing page URL.
+- Use only Markdown tables, no other formats.`;
 
     // Validate API key
     const apiKey = process.env.XAI_API_KEY;

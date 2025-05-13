@@ -287,12 +287,14 @@ export default function Home() {
           width: 100%;
           border-collapse: collapse;
           margin: 16px 0;
+          font-size: 0.9rem;
         }
         .prose th,
         .prose td {
           border: 1px solid #e5e7eb;
-          padding: 8px;
+          padding: 10px;
           text-align: left;
+          vertical-align: top;
         }
         .prose th {
           background-color: #f3f4f6;
@@ -301,6 +303,9 @@ export default function Home() {
         .prose h2 {
           margin-top: 24px;
           margin-bottom: 16px;
+        }
+        .prose tr:nth-child(even) {
+          background-color: #f9fafb;
         }
         @keyframes progress {
           0% {
