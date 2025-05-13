@@ -24,6 +24,22 @@ interface ReportRequest {
   providers: SelectedProvider[];
 }
 
+// Fallback table generator if Grok doesn't provide valid Markdown tables
+const generateFallbackTable = (provider: SelectedProvider, pricingUrl: string): string => {
+  const rows = Object.entries(provider.inputs)
+    .map(([key, value]) => `| ${key} | ${value} | Unknown | Unknown |`)
+    .join('\n');
+  return `
+## Provider: ${provider.provider.name}
+| Input | Value | Original Price (USD) | Estimated Cost (USD) |
+|-------|-------|----------------------|----------------------|
+${rows}
+| Total | - | - | Unknown |
+For exact pricing, see: ${pricingUrl}
+
+`;
+};
+
 export async function POST(request: NextRequest) {
   try {
     const body: ReportRequest = await request.json();
@@ -40,21 +56,23 @@ export async function POST(request: NextRequest) {
       return `${item.provider.name}: Inputs=${JSON.stringify(item.inputs)}`;
     }).join('\n');
 
-    // Prompt Grok for tables with original and estimated costs
-    const prompt = `You are a cloud cost estimation expert. Based on the following provider inputs, estimate the monthly costs for each provider and provide a total cost. If exact pricing is unavailable, indicate where to find it (e.g., provider's pricing page). Do not include cost optimization recommendations.
+    // Prompt Grok for structured tables
+    const prompt = `You are a cloud cost estimation expert. Based on the following provider inputs, estimate the monthly costs for each provider. If exact pricing is unavailable, indicate the provider's pricing page URL.
 
 Inputs:
 ${summary}
 
 Generate a report in Markdown format with:
 - A separate table for each provider with columns: Input, Value, Original Price (USD), Estimated Cost (USD).
-  - Original Price: The provider's standard list price for the input (e.g., base price per GB or hour).
-  - Estimated Cost: The calculated cost based on inputs (e.g., adjusted for usage duration or quantity).
-- For multiple providers, include a final table with columns: Provider, Original Price (USD), Estimated Cost (USD), summarizing totals for each provider and a grand total.
-- Use Markdown table syntax (e.g., | Input | Value | Original Price | Estimated Cost |).
-- Include headers like ## Provider: <Name> before each provider table and ## Totals before the totals table.
+  - Original Price: The provider's standard list price (e.g., $0.10/GB).
+  - Estimated Cost: The calculated cost based on inputs (e.g., adjusted for usage).
+  - Include a final row in each table with the total estimated cost: | Total | - | - | $X.XX |.
+- For multiple providers, include a totals table with columns: Provider, Original Price (USD), Estimated Cost (USD), summarizing each provider's totals and a grand total in the last row.
+- Use only Markdown table syntax (e.g., | Input | Value | Original Price | Estimated Cost |).
+- Include headers: ## Provider: <Name> for provider tables, ## Totals for the totals table.
+- At the end, add a ## Notes section listing the pricing source URLs (e.g., - Mongo Atlas: https://www.mongodb.com/pricing).
 - Format prices as $X.XX (e.g., $123.45).
-- If pricing is unavailable, note the provider's pricing page URL.
+- Do not include cost optimization recommendations.
 - Use only Markdown tables, no other formats.`;
 
     // Validate API key
@@ -77,7 +95,7 @@ Generate a report in Markdown format with:
           { role: 'user', content: prompt },
         ],
         temperature: 0.2,
-        max_tokens: 1000,
+        max_tokens: 1500, // Increased to accommodate tables and notes
       },
       {
         headers: {
@@ -87,8 +105,37 @@ Generate a report in Markdown format with:
       }
     );
 
-    const reportText = response.data.choices[0].message.content;
-    // Convert Markdown to HTML using marked
+    let reportText = response.data.choices[0].message.content;
+
+    // Validate that the response contains Markdown tables
+    const hasTables = reportText.includes('|') && reportText.includes('---');
+    if (!hasTables) {
+      console.warn('Grok response lacks valid Markdown tables, generating fallback');
+      reportText = body.providers
+        .map((provider) =>
+          generateFallbackTable(provider, `https://www.${provider.provider.name.toLowerCase().replace(/\s+/g, '')}.com/pricing`)
+        )
+        .join('\n');
+      if (body.providers.length > 1) {
+        reportText += `
+## Totals
+| Provider | Original Price (USD) | Estimated Cost (USD) |
+|----------|----------------------|----------------------|
+${body.providers.map((p) => `| ${p.provider.name} | Unknown | Unknown |`).join('\n')}
+| **Total** | **Unknown** | **Unknown** |
+
+## Notes
+${body.providers.map((p) => `- ${p.provider.name}: https://www.${p.provider.name.toLowerCase().replace(/\s+/g, '')}.com/pricing`).join('\n')}
+`;
+      } else {
+        reportText += `
+## Notes
+${body.providers.map((p) => `- ${p.provider.name}: https://www.${p.provider.name.toLowerCase().replace(/\s+/g, '')}.com/pricing`).join('\n')}
+`;
+      }
+    }
+
+    // Convert Markdown to HTML
     const reportHtml = await marked(reportText, { breaks: true, gfm: true });
 
     return NextResponse.json({ report: reportHtml }, { status: 200 });

@@ -307,6 +307,13 @@ export default function Home() {
         .prose tr:nth-child(even) {
           background-color: #f9fafb;
         }
+        .prose tr:last-child {
+          font-weight: 600;
+          background-color: #f0f9ff;
+        }
+        .prose ul {
+          list-style-type: disc;
+        }
         @keyframes progress {
           0% {
             transform: translateX(-100%);
