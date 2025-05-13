@@ -45,6 +45,7 @@
     "lexical": "^0.31.0",
     "lodash-es": "^4.17.21",
     "lucide-react": "^0.509.0",
+    "marked": "^15.0.11",
     "mongodb": "^6.9.0",
     "next": "^15.0.0",
     "quill": "^2.0.2",

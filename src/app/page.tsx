@@ -31,7 +31,7 @@ export default function Home() {
   const [report, setReport] = useState<string>('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
-  const [isGeneratingReport, setIsGeneratingReport] = useState(false); // New state for progress bar
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
 
   useEffect(() => {
     const fetchProviders = async () => {
@@ -112,7 +112,7 @@ export default function Home() {
       return;
     }
 
-    setIsGeneratingReport(true); // Show progress bar
+    setIsGeneratingReport(true);
     try {
       const response = await axios.post('/api/report', { providers: selectedProviders });
       const reportContent = response.data.report || JSON.stringify(response.data);
@@ -124,7 +124,7 @@ export default function Home() {
         err.response?.data?.error || err.message || 'Error generating report. Please try again.'
       );
     } finally {
-      setIsGeneratingReport(false); // Hide progress bar
+      setIsGeneratingReport(false);
     }
   };
 
@@ -248,10 +248,12 @@ export default function Home() {
           </div>
         )}
         {report ? (
-          <div
-            className="border rounded p-4 prose"
-            dangerouslySetInnerHTML={{ __html: report }}
-          />
+          <div className="border rounded p-4 prose">
+            <div
+              className="report-content"
+              dangerouslySetInnerHTML={{ __html: report }}
+            />
+          </div>
         ) : (
           <p>No report generated yet.</p>
         )}
@@ -280,6 +282,25 @@ export default function Home() {
         }
         .prose li {
           margin: 4px 0;
+        }
+        .prose table {
+          width: 100%;
+          border-collapse: collapse;
+          margin: 16px 0;
+        }
+        .prose th,
+        .prose td {
+          border: 1px solid #e5e7eb;
+          padding: 8px;
+          text-align: left;
+        }
+        .prose th {
+          background-color: #f3f4f6;
+          font-weight: 600;
+        }
+        .prose h2 {
+          margin-top: 24px;
+          margin-bottom: 16px;
         }
         @keyframes progress {
           0% {

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import axios from 'axios';
+import { marked } from 'marked';
 
 interface ProviderInput {
   name: string;
@@ -23,25 +24,6 @@ interface ReportRequest {
   providers: SelectedProvider[];
 }
 
-// Simple Markdown to HTML converter for Grok's response
-const markdownToHtml = (text: string): string => {
-  let html = text
-    .replace(/^# (.*)$/gm, '<h1>$1</h1>')
-    .replace(/^## (.*)$/gm, '<h2>$1</h2>')
-    .replace(/^### (.*)$/gm, '<h3>$1</h3>')
-    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-    .replace(/_(.*?)_/g, '<em>$1</em>')
-    .replace(/^- (.*)$/gm, '<li>$1</li>')
-    .replace(/(\n<li>.*<\/li>)+/g, '<ul>$&</ul>')
-    .replace(/\n/g, '<br>');
-
-  if (!html.includes('<h') && !html.includes('<ul') && !html.includes('<p')) {
-    html = `<p>${html}</p>`;
-  }
-
-  return html;
-};
-
 export async function POST(request: NextRequest) {
   try {
     const body: ReportRequest = await request.json();
@@ -58,8 +40,19 @@ export async function POST(request: NextRequest) {
       return `${item.provider.name}: Inputs=${JSON.stringify(item.inputs)}`;
     }).join('\n');
 
-    // Prompt Grok to estimate costs only
-    const prompt = `You are a cloud cost estimation expert. Based on the following provider inputs, estimate the monthly costs for each provider and provide a total cost. If exact pricing is unavailable, indicate where to find it (e.g., provider's pricing page). Do not include cost optimization recommendations. Inputs:\n${summary}\n\nGenerate a detailed report with cost breakdowns in Markdown format (e.g., ## for headings, ** for bold, - for lists).`;
+    // Prompt Grok for tables
+    const prompt = `You are a cloud cost estimation expert. Based on the following provider inputs, estimate the monthly costs for each provider and provide a total cost. If exact pricing is unavailable, indicate where to find it (e.g., provider's pricing page). Do not include cost optimization recommendations.
+
+Inputs:
+${summary}
+
+Generate a report in Markdown format with:
+- A separate table for each provider with columns: Input, Value, Estimated Cost (in USD).
+- For multiple providers, include a final table with columns: Provider, Total Cost (in USD).
+- Use Markdown table syntax (e.g., | Input | Value | Estimated Cost |).
+- Include headers like ## Provider: <Name> before each provider table and ## Totals before the totals table.
+- Format costs as $X.XX (e.g., $123.45).
+- If pricing is unavailable, note the provider's pricing page URL.`;
 
     // Validate API key
     const apiKey = process.env.XAI_API_KEY;
@@ -92,7 +85,8 @@ export async function POST(request: NextRequest) {
     );
 
     const reportText = response.data.choices[0].message.content;
-    const reportHtml = markdownToHtml(reportText);
+    // Convert Markdown to HTML using marked
+    const reportHtml = await marked(reportText, { breaks: true, gfm: true });
 
     return NextResponse.json({ report: reportHtml }, { status: 200 });
   } catch (error: any) {
