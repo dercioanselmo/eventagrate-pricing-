@@ -19,14 +19,29 @@ interface CalculateRequest {
 
 export async function POST(request: NextRequest) {
   try {
-    const { provider, inputs }: CalculateRequest = await request.json();
-    console.log('POST /api/calculate received:', { provider, inputs });
+    const body: CalculateRequest = await request.json();
+    console.log('POST /api/calculate received:', body);
 
-    if (!provider || !provider.name || !provider.inputs) {
-      return NextResponse.json({ error: 'Invalid provider data' }, { status: 400 });
+    if (!body) {
+      return NextResponse.json({ error: 'Request body is empty' }, { status: 400 });
     }
-    if (!inputs || typeof inputs !== 'object') {
-      return NextResponse.json({ error: 'Invalid input values' }, { status: 400 });
+
+    const { provider, inputs } = body;
+
+    if (!provider) {
+      return NextResponse.json({ error: 'Provider data is missing' }, { status: 400 });
+    }
+    if (!provider.name) {
+      return NextResponse.json({ error: 'Provider name is required' }, { status: 400 });
+    }
+    if (!provider.inputs || !Array.isArray(provider.inputs)) {
+      return NextResponse.json({ error: 'Provider inputs must be a non-empty array' }, { status: 400 });
+    }
+    if (provider.inputs.length === 0) {
+      return NextResponse.json({ error: 'At least one provider input is required' }, { status: 400 });
+    }
+    if (!inputs || typeof inputs !== 'object' || Object.keys(inputs).length === 0) {
+      return NextResponse.json({ error: 'Input values must be a non-empty object' }, { status: 400 });
     }
 
     // Simple pricing calculation (customize based on your needs)
