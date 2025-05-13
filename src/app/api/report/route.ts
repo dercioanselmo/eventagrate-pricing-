@@ -27,14 +27,14 @@ interface ReportRequest {
 // Fallback table generator if Grok doesn't provide valid Markdown tables
 const generateFallbackTable = (provider: SelectedProvider, pricingUrl: string): string => {
   const rows = Object.entries(provider.inputs)
-    .map(([key, value]) => `| ${key} | ${value} | Unknown | Unknown |`)
+    .map(([key, value]) => `| ${key} | ${value} | Unknown | Unknown | - |`)
     .join('\n');
   return `
 ## Provider: ${provider.provider.name}
-| Input | Value | Original Price (USD) | Estimated Cost (USD) |
-|-------|-------|----------------------|----------------------|
+| Input | Value | Original Price (USD) | Estimated Cost (USD) | Cost Calculation |
+|-------|-------|----------------------|----------------------|------------------|
 ${rows}
-| Total | - | - | Unknown |
+| Total | - | - | Unknown | - |
 For exact pricing, see: ${pricingUrl}
 
 `;
@@ -56,19 +56,20 @@ export async function POST(request: NextRequest) {
       return `${item.provider.name}: Inputs=${JSON.stringify(item.inputs)}`;
     }).join('\n');
 
-    // Prompt Grok for structured tables with plain text URLs
+    // Prompt Grok for structured tables with cost calculation
     const prompt = `You are a cloud cost estimation expert. Based on the following provider inputs, estimate the monthly costs for each provider. If exact pricing is unavailable, indicate the provider's pricing page URL.
 
 Inputs:
 ${summary}
 
 Generate a report in Markdown format with:
-- A separate table for each provider with columns: Input, Value, Original Price (USD), Estimated Cost (USD).
+- A separate table for each provider with columns: Input, Value, Original Price (USD), Estimated Cost (USD), Cost Calculation.
   - Original Price: The provider's standard list price (e.g., $0.10/GB).
   - Estimated Cost: The calculated cost based on inputs (e.g., adjusted for usage).
-  - Include a final row in each table with the total estimated cost: | Total | - | - | $X.XX |.
+  - Cost Calculation: A short description of how the Estimated Cost was calculated (e.g., "$0.08/hour × 730 hours") for rows with a non-zero or non-"Included" Estimated Cost; otherwise, use "-".
+  - Include a final row in each table with the total estimated cost: | Total | - | - | $X.XX | - |.
 - For multiple providers, include a totals table with columns: Provider, Original Price (USD), Estimated Cost (USD), summarizing each provider's totals and a grand total in the last row.
-- Use only Markdown table syntax (e.g., | Input | Value | Original Price | Estimated Cost |).
+- Use only Markdown table syntax (e.g., | Input | Value | Original Price | Estimated Cost | Cost Calculation |).
 - Include headers: ## Provider: <Name> for provider tables, ## Totals for the totals table.
 - At the end, add a ## Notes section listing the pricing source URLs as plain text (e.g., - Mongo Atlas: https://www.mongodb.com/pricing). Do not use Markdown hyperlinks.
 - Format prices as $X.XX (e.g., $123.45).

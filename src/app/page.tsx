@@ -282,23 +282,25 @@ export default function Home() {
         }
         .prose li {
           margin: 4px 0;
+          margin-bottom: 8px;
         }
         .prose table {
           width: 100%;
           border-collapse: collapse;
           margin: 16px 0;
-          font-size: 0.9rem;
+          font-size: 0.85rem;
         }
         .prose th,
         .prose td {
           border: 1px solid #e5e7eb;
-          padding: 10px;
+          padding: 12px;
           text-align: left;
           vertical-align: top;
         }
         .prose th {
           background-color: #f3f4f6;
           font-weight: 600;
+          text-align: left !important;
         }
         .prose h2 {
           margin-top: 24px;
