@@ -28,7 +28,7 @@ export default function Home() {
   const [selectedProvider, setSelectedProvider] = useState<Provider | null>(null);
   const [inputs, setInputs] = useState<{ [key: string]: string }>({});
   const [selectedProviders, setSelectedProviders] = useState<SelectedProvider[]>([]);
-  const [report, setReport] = useState<string>(''); // New state for report
+  const [report, setReport] = useState<string>('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -70,7 +70,6 @@ export default function Home() {
       return;
     }
 
-    // Validate inputs
     const missingInputs = selectedProvider.inputs.filter(
       (input) => !inputs[input.name] && input.defaultValue === ''
     );
@@ -91,6 +90,7 @@ export default function Home() {
       ]);
       setSelectedProvider(null);
       setInputs({});
+      setReport(''); // Reset report
       setError('');
     } catch (err: any) {
       console.error('handleAddProvider error:', err);
@@ -102,6 +102,7 @@ export default function Home() {
 
   const handleRemoveProvider = (index: number) => {
     setSelectedProviders((prev) => prev.filter((_, i) => i !== index));
+    setReport(''); // Reset report
   };
 
   const handleGenerateReport = async () => {
@@ -112,9 +113,8 @@ export default function Home() {
 
     try {
       const response = await axios.post('/api/report', { providers: selectedProviders });
-      // Assume response.data.report contains HTML or plain text
       const reportContent = response.data.report || JSON.stringify(response.data);
-      setReport(DOMPurify.sanitize(reportContent)); // Sanitize and store report
+      setReport(DOMPurify.sanitize(reportContent));
       setError('');
     } catch (err: any) {
       console.error('handleGenerateReport error:', err);

@@ -25,7 +25,6 @@ interface ReportRequest {
 
 // Simple Markdown to HTML converter for Grok's response
 const markdownToHtml = (text: string): string => {
-  // Basic conversion (extend as needed)
   let html = text
     .replace(/^# (.*)$/gm, '<h1>$1</h1>')
     .replace(/^## (.*)$/gm, '<h2>$1</h2>')
@@ -36,7 +35,6 @@ const markdownToHtml = (text: string): string => {
     .replace(/(\n<li>.*<\/li>)+/g, '<ul>$&</ul>')
     .replace(/\n/g, '<br>');
 
-  // Wrap in paragraph tags if not already structured
   if (!html.includes('<h') && !html.includes('<ul') && !html.includes('<p')) {
     html = `<p>${html}</p>`;
   }
@@ -60,8 +58,8 @@ export async function POST(request: NextRequest) {
       return `${item.provider.name}: Inputs=${JSON.stringify(item.inputs)}`;
     }).join('\n');
 
-    // Prompt Grok to estimate costs and generate a report
-    const prompt = `You are a cloud cost optimization expert. Based on the following provider inputs, estimate the monthly costs for each provider, provide a total cost, and suggest optimizations. If exact pricing is unavailable, indicate where to find it (e.g., provider's pricing page). Inputs:\n${summary}\n\nGenerate a detailed report with cost breakdowns and recommendations. Use Markdown for formatting (e.g., ## for headings, ** for bold, - for lists).`;
+    // Prompt Grok to estimate costs only
+    const prompt = `You are a cloud cost estimation expert. Based on the following provider inputs, estimate the monthly costs for each provider and provide a total cost. If exact pricing is unavailable, indicate where to find it (e.g., provider's pricing page). Do not include cost optimization recommendations. Inputs:\n${summary}\n\nGenerate a detailed report with cost breakdowns in Markdown format (e.g., ## for headings, ** for bold, - for lists).`;
 
     // Validate API key
     const apiKey = process.env.XAI_API_KEY;
@@ -79,7 +77,7 @@ export async function POST(request: NextRequest) {
       {
         model: 'grok-beta',
         messages: [
-          { role: 'system', content: 'You are a cloud cost optimization expert.' },
+          { role: 'system', content: 'You are a cloud cost estimation expert.' },
           { role: 'user', content: prompt },
         ],
         temperature: 0.2,
@@ -94,7 +92,6 @@ export async function POST(request: NextRequest) {
     );
 
     const reportText = response.data.choices[0].message.content;
-    // Convert Markdown to HTML for rendering
     const reportHtml = markdownToHtml(reportText);
 
     return NextResponse.json({ report: reportHtml }, { status: 200 });
