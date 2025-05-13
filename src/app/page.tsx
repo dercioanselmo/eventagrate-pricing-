@@ -31,6 +31,7 @@ export default function Home() {
   const [report, setReport] = useState<string>('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false); // New state for progress bar
 
   useEffect(() => {
     const fetchProviders = async () => {
@@ -90,7 +91,7 @@ export default function Home() {
       ]);
       setSelectedProvider(null);
       setInputs({});
-      setReport(''); // Reset report
+      setReport('');
       setError('');
     } catch (err: any) {
       console.error('handleAddProvider error:', err);
@@ -102,7 +103,7 @@ export default function Home() {
 
   const handleRemoveProvider = (index: number) => {
     setSelectedProviders((prev) => prev.filter((_, i) => i !== index));
-    setReport(''); // Reset report
+    setReport('');
   };
 
   const handleGenerateReport = async () => {
@@ -111,6 +112,7 @@ export default function Home() {
       return;
     }
 
+    setIsGeneratingReport(true); // Show progress bar
     try {
       const response = await axios.post('/api/report', { providers: selectedProviders });
       const reportContent = response.data.report || JSON.stringify(response.data);
@@ -121,6 +123,8 @@ export default function Home() {
       setError(
         err.response?.data?.error || err.message || 'Error generating report. Please try again.'
       );
+    } finally {
+      setIsGeneratingReport(false); // Hide progress bar
     }
   };
 
@@ -232,6 +236,17 @@ export default function Home() {
       {/* Report Section */}
       <div className="mb-8">
         <h2 className="text-xl font-semibold mb-2">Cost Report</h2>
+        {isGeneratingReport && (
+          <div className="mb-4">
+            <div className="w-full bg-gray-200 rounded-full h-2.5">
+              <div
+                className="bg-blue-500 h-2.5 rounded-full animate-progress"
+                style={{ width: '100%' }}
+              ></div>
+            </div>
+            <p className="text-sm text-gray-600 mt-1">Generating report...</p>
+          </div>
+        )}
         {report ? (
           <div
             className="border rounded p-4 prose"
@@ -244,8 +259,9 @@ export default function Home() {
 
       {/* Generate Report */}
       <button
-        className="bg-green-500 text-white p-2 rounded hover:bg-green-600"
+        className="bg-green-500 text-white p-2 rounded hover:bg-green-600 disabled:bg-green-300"
         onClick={handleGenerateReport}
+        disabled={isGeneratingReport}
       >
         Generate Report
       </button>
@@ -264,6 +280,20 @@ export default function Home() {
         }
         .prose li {
           margin: 4px 0;
+        }
+        @keyframes progress {
+          0% {
+            transform: translateX(-100%);
+          }
+          50% {
+            transform: translateX(100%);
+          }
+          100% {
+            transform: translateX(100%);
+          }
+        }
+        .animate-progress {
+          animation: progress 1.5s ease-in-out infinite;
         }
       `}</style>
     </div>
