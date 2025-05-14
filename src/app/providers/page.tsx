@@ -3,9 +3,12 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import axios from 'axios';
 import Link from 'next/link';
-import DOMPurify from 'dompurify';
 import { Slate, Editable, withReact, ReactEditor } from 'slate-react';
 import { createEditor, Descendant, Editor, Transforms, Text } from 'slate';
+import dynamic from 'next/dynamic';
+
+// Dynamically import DOMPurify client-side
+const DOMPurify = dynamic(() => import('dompurify'), { ssr: false });
 
 // Define types
 interface ProviderInput {
@@ -47,61 +50,66 @@ const serialize = (nodes: Descendant[]): string => {
       }
     })
     .join('');
-  const sanitized = DOMPurify.sanitize(html, {
+  const sanitized = DOMPurify.sanitize ? DOMPurify.sanitize(html, {
     ALLOWED_TAGS: ['p', 'strong', 'em', 'u', 'ul', 'li'],
     ALLOWED_ATTR: [],
-  });
+  }) : html;
   console.log('Serialized HTML:', sanitized);
   return sanitized;
 };
 
 const deserialize = (html: string): Descendant[] => {
   console.log('Deserializing HTML:', html);
-  const sanitized = DOMPurify.sanitize(html, {
-    ALLOWED_TAGS: ['p', 'strong', 'em', 'u', 'ul', 'li'],
-    ALLOWED_ATTR: [],
-  });
-  const div = document.createElement('div');
-  div.innerHTML = sanitized || '<p></p>';
-  const nodes: Descendant[] = [];
+  try {
+    const sanitized = DOMPurify.sanitize ? DOMPurify.sanitize(html || '<p></p>', {
+      ALLOWED_TAGS: ['p', 'strong', 'em', 'u', 'ul', 'li'],
+      ALLOWED_ATTR: [],
+    }) : (html || '<p></p>');
+    const div = document.createElement('div');
+    div.innerHTML = sanitized;
+    const nodes: Descendant[] = [];
 
-  const processNode = (element: Node): Descendant | null => {
-    if (element.nodeType === 3) {
-      return { text: element.textContent || '' };
-    }
-    if (element.nodeType !== 1) return null;
+    const processNode = (element: Node): Descendant | null => {
+      if (element.nodeType === 3) {
+        return { text: element.textContent || '' };
+      }
+      if (element.nodeType !== 1) return null;
 
-    const node = element as HTMLElement;
-    const children = Array.from(node.childNodes)
-      .map(processNode)
-      .filter((n): n is Descendant => n !== null);
+      const node = element as HTMLElement;
+      const children = Array.from(node.childNodes)
+        .map(processNode)
+        .filter((n): n is Descendant => n !== null);
 
-    switch (node.tagName.toLowerCase()) {
-      case 'p':
-        return { type: 'paragraph', children: children.length ? children : [{ text: '' }] };
-      case 'ul':
-        return { type: 'ul', children: children.length ? children : [{ text: '' }] };
-      case 'li':
-        return { type: 'li', children: children.length ? children : [{ text: '' }] };
-      case 'strong':
-        return { text: node.textContent || '', bold: true };
-      case 'em':
-        return { text: node.textContent || '', italic: true };
-      case 'u':
-        return { text: node.textContent || '', underline: true };
-      default:
-        return children.length ? { type: 'paragraph', children } : null;
-    }
-  };
+      switch (node.tagName.toLowerCase()) {
+        case 'p':
+          return { type: 'paragraph', children: children.length ? children : [{ text: '' }] };
+        case 'ul':
+          return { type: 'ul', children: children.length ? children : [{ text: '' }] };
+        case 'li':
+          return { type: 'li', children: children.length ? children : [{ text: '' }] };
+        case 'strong':
+          return { text: node.textContent || '', bold: true };
+        case 'em':
+          return { text: node.textContent || '', italic: true };
+        case 'u':
+          return { text: node.textContent || '', underline: true };
+        default:
+          return children.length ? { type: 'paragraph', children } : null;
+      }
+    };
 
-  Array.from(div.childNodes).forEach((child) => {
-    const node = processNode(child);
-    if (node) nodes.push(node);
-  });
+    Array.from(div.childNodes).forEach((child) => {
+      const node = processNode(child);
+      if (node) nodes.push(node);
+    });
 
-  const result = nodes.length ? nodes : [{ type: 'paragraph', children: [{ text: '' }] }];
-  console.log('Deserialized nodes:', JSON.stringify(result, null, 2));
-  return result;
+    const result = nodes.length ? nodes : [{ type: 'paragraph', children: [{ text: '' }] }];
+    console.log('Deserialized nodes:', JSON.stringify(result, null, 2));
+    return result;
+  } catch (error) {
+    console.error('Deserialize error:', error);
+    return [{ type: 'paragraph', children: [{ text: '' }] }];
+  }
 };
 
 // Formatting helpers
@@ -235,8 +243,17 @@ export default function Providers() {
   const handleDuplicate = async (id: string) => {
     try {
       const response = await axios.post('/api/providers/duplicate', { providerId: id });
-      setProviders([...providers, response.data.provider]);
+      const newProvider = response.data.provider;
+      setProviders([...providers, newProvider]);
       setError('');
+      // Safely update editor states
+      setEditorStates(newProvider.inputs.map((input: ProviderInput) => {
+        try {
+          return deserialize(input.description);
+        } catch {
+          return [{ type: 'paragraph', children: [{ text: '' }] }];
+        }
+      }));
     } catch (err: any) {
       setError(err.response?.data?.error || 'Error duplicating provider');
     }
@@ -514,4 +531,4 @@ export default function Providers() {
       `}</style>
     </div>
   );
-}
+}                               
