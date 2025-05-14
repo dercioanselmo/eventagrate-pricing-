@@ -4,9 +4,9 @@ import { MongoClient, ObjectId } from 'mongodb';
 const uri = process.env.MONGODB_URI || '';
 const client = new MongoClient(uri);
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
-    const { id } = params;
+    const { id } = await context.params; // Await params to resolve the Promise
 
     if (!id || !ObjectId.isValid(id)) {
       return NextResponse.json({ error: 'Invalid provider ID' }, { status: 400 });
