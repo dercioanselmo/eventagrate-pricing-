@@ -1,243 +1,153 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import axios from 'axios';
 import Link from 'next/link';
-import { Slate, Editable, withReact, withHistory } from 'slate-react';
-import { createEditor, Descendant, Editor, Transforms, Element as SlateElement } from 'slate';
-import { withHistory as withSlateHistory } from 'slate-history';
+import DOMPurify from 'dompurify';
+import { Slate, Editable, withReact, ReactEditor } from 'slate-react';
+import { createEditor, Descendant, Editor, Transforms, Text } from 'slate';
 
+// Define types
 interface ProviderInput {
   name: string;
   type: string;
   defaultValue: string;
-  description: string;
+  description: string; // HTML string
 }
 
 interface Provider {
+  _id: string;
   name: string;
   inputs: ProviderInput[];
+  pricing?: { [key: string]: { price: string; url: string } };
 }
 
-// Convert HTML to Slate JSON
-const htmlToSlate = (html: string): Descendant[] => {
-  if (!html || html === '<p></p>' || html === '') {
-    return [
-      {
-        type: 'paragraph',
-        children: [{ text: '' }],
-      },
-    ];
-  }
-
-  try {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-    const body = doc.body;
-
-    const parseNode = (node: Node): Descendant[] => {
-      if (node.nodeType === Node.TEXT_NODE) {
-        return [{ text: node.textContent || '' }];
+// Slate.js serializer for HTML
+const serialize = (nodes: Descendant[]): string => {
+  console.log('Serializing nodes:', JSON.stringify(nodes, null, 2));
+  const html = nodes
+    .map((node) => {
+      if (Text.isText(node)) {
+        let text = node.text || '';
+        if (node.bold) text = `<strong>${text}</strong>`;
+        if (node.italic) text = `<em>${text}</em>`;
+        if (node.underline) text = `<u>${text}</u>`;
+        return text;
       }
-
-      if (node.nodeType !== Node.ELEMENT_NODE) return [];
-
-      const element = node as HTMLElement;
-      const children = Array.from(element.childNodes).flatMap(parseNode);
-
-      switch (element.tagName.toLowerCase()) {
-        case 'p':
-          return [{ type: 'paragraph', children: children.length ? children : [{ text: '' }] }];
+      const children = serialize(node.children);
+      switch (node.type) {
+        case 'paragraph':
+          return `<p>${children}</p>`;
         case 'ul':
-          return [{ type: 'bulleted-list', children: children.filter((c) => (c as any).type === 'list-item') }];
-        case 'ol':
-          return [{ type: 'numbered-list', children: children.filter((c) => (c as any).type === 'list-item') }];
+          return `<ul>${children}</ul>`;
         case 'li':
-          return [{ type: 'list-item', children: children.length ? children : [{ text: '' }] }];
-        case 'strong':
-          return children.map((child) => ({ ...child, bold: true }));
-        case 'em':
-          return children.map((child) => ({ ...child, italic: true }));
+          return `<li>${children}</li>`;
         default:
           return children;
       }
-    };
+    })
+    .join('');
+  const sanitized = DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ['p', 'strong', 'em', 'u', 'ul', 'li'],
+    ALLOWED_ATTR: [],
+  });
+  console.log('Serialized HTML:', sanitized);
+  return sanitized;
+};
 
-    const nodes = Array.from(body.childNodes).flatMap(parseNode);
-    return nodes.length ? nodes : [{ type: 'paragraph', children: [{ text: '' }] }];
-  } catch (err) {
-    console.error('Error parsing HTML to Slate:', err);
-    return [
-      {
-        type: 'paragraph',
-        children: [{ text: '' }],
-      },
-    ];
+const deserialize = (html: string): Descendant[] => {
+  console.log('Deserializing HTML:', html);
+  const sanitized = DOMPurify.sanitize(html, {
+    ALLOWED_TAGS: ['p', 'strong', 'em', 'u', 'ul', 'li'],
+    ALLOWED_ATTR: [],
+  });
+  const div = document.createElement('div');
+  div.innerHTML = sanitized || '<p></p>';
+  const nodes: Descendant[] = [];
+
+  const processNode = (element: Node): Descendant | null => {
+    if (element.nodeType === 3) {
+      return { text: element.textContent || '' };
+    }
+    if (element.nodeType !== 1) return null;
+
+    const node = element as HTMLElement;
+    const children = Array.from(node.childNodes)
+      .map(processNode)
+      .filter((n): n is Descendant => n !== null);
+
+    switch (node.tagName.toLowerCase()) {
+      case 'p':
+        return { type: 'paragraph', children: children.length ? children : [{ text: '' }] };
+      case 'ul':
+        return { type: 'ul', children: children.length ? children : [{ text: '' }] };
+      case 'li':
+        return { type: 'li', children: children.length ? children : [{ text: '' }] };
+      case 'strong':
+        return { text: node.textContent || '', bold: true };
+      case 'em':
+        return { text: node.textContent || '', italic: true };
+      case 'u':
+        return { text: node.textContent || '', underline: true };
+      default:
+        return children.length ? { type: 'paragraph', children } : null;
+    }
+  };
+
+  Array.from(div.childNodes).forEach((child) => {
+    const node = processNode(child);
+    if (node) nodes.push(node);
+  });
+
+  const result = nodes.length ? nodes : [{ type: 'paragraph', children: [{ text: '' }] }];
+  console.log('Deserialized nodes:', JSON.stringify(result, null, 2));
+  return result;
+};
+
+// Formatting helpers
+const toggleMark = (editor: Editor, format: string) => {
+  const isActive = isMarkActive(editor, format);
+  if (isActive) {
+    Editor.removeMark(editor, format);
+  } else {
+    Editor.addMark(editor, format, true);
   }
 };
 
-// Slate.js Editor Component
-const SlateEditor = ({ value, onChange, index }: { value: string; onChange: (value: string) => void; index: number }) => {
-  const editor = useMemo(() => withSlateHistory(withReact(createEditor())), []);
-  const initialValue: Descendant[] = htmlToSlate(value);
+const isMarkActive = (editor: Editor, format: string) => {
+  const marks = Editor.marks(editor);
+  return marks ? marks[format] === true : false;
+};
 
-  const renderElement = useCallback(({ attributes, children, element }: any) => {
-    switch (element.type) {
-      case 'bulleted-list':
-        return <ul {...attributes}>{children}</ul>;
-      case 'numbered-list':
-        return <ol {...attributes}>{children}</ol>;
-      case 'list-item':
-        return <li {...attributes}>{children}</li>;
-      case 'paragraph':
-        return <p {...attributes}>{children}</p>;
-      default:
-        return <div {...attributes}>{children}</div>;
-    }
-  }, []);
+const toggleBlock = (editor: Editor, format: string) => {
+  const isActive = isBlockActive(editor, format);
+  Transforms.setNodes(editor, {
+    type: isActive ? 'paragraph' : format,
+  });
+};
 
-  const renderLeaf = useCallback(({ attributes, children, leaf }: any) => {
-    let el = children;
-    if (leaf.bold) {
-      el = <strong>{el}</strong>;
-    }
-    if (leaf.italic) {
-      el = <em>{el}</em>;
-    }
-    return <span {...attributes}>{el}</span>;
-  }, []);
-
-  const toggleMark = (editor: Editor, format: string) => {
-    const isActive = isMarkActive(editor, format);
-    if (isActive) {
-      Editor.removeMark(editor, format);
-    } else {
-      Editor.addMark(editor, format, true);
-    }
-  };
-
-  const toggleBlock = (editor: Editor, format: string) => {
-    const isActive = isBlockActive(editor, format);
-    const isList = ['bulleted-list', 'numbered-list'].includes(format);
-
-    Transforms.unwrapNodes(editor, {
-      match: (n) => ['bulleted-list', 'numbered-list'].includes((n as SlateElement).type),
-      split: true,
-    });
-
-    const newProperties: Partial<SlateElement> = {
-      type: isActive ? 'paragraph' : isList ? 'list-item' : format,
-    };
-    Transforms.setNodes(editor, newProperties);
-
-    if (!isActive && isList) {
-      const block = { type: format, children: [] };
-      Transforms.wrapNodes(editor, block);
-    }
-  };
-
-  const isMarkActive = (editor: Editor, format: string) => {
-    const marks = Editor.marks(editor);
-    return marks ? marks[format] === true : false;
-  };
-
-  const isBlockActive = (editor: Editor, format: string) => {
-    const [match] = Editor.nodes(editor, {
-      match: (n) => (n as SlateElement).type === format,
-    });
-    return !!match;
-  };
-
-  const serializeToHtml = (nodes: Descendant[]): string => {
-    const html = nodes
-      .map((node) => {
-        if ('text' in node) {
-          let text = node.text || '';
-          if (node.bold) text = `<strong>${text}</strong>`;
-          if (node.italic) text = `<em>${text}</em>`;
-          return text;
-        }
-        const children = serializeToHtml(node.children);
-        switch (node.type) {
-          case 'paragraph':
-            return `<p>${children}</p>`;
-          case 'bulleted-list':
-            return `<ul>${children}</ul>`;
-          case 'numbered-list':
-            return `<ol>${children}</ol>`;
-          case 'list-item':
-            return `<li>${children}</li>`;
-          default:
-            return children;
-        }
-      })
-      .join('');
-    return html || '';
-  };
-
-  return (
-    <div className="border rounded">
-      <div className="toolbar flex gap-2 p-1 bg-gray-100 rounded mb-2">
-        <button
-          onClick={() => toggleMark(editor, 'bold')}
-          className={`px-2 py-1 rounded ${isMarkActive(editor, 'bold') ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
-          title="Bold"
-        >
-          B
-        </button>
-        <button
-          onClick={() => toggleMark(editor, 'italic')}
-          className={`px-2 py-1 rounded ${isMarkActive(editor, 'italic') ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
-          title="Italic"
-        >
-          I
-        </button>
-        <button
-          onClick={() => toggleBlock(editor, 'bulleted-list')}
-          className={`px-2 py-1 rounded ${isBlockActive(editor, 'bulleted-list') ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
-          title="Bullet List"
-        >
-          •
-        </button>
-        <button
-          onClick={() => toggleBlock(editor, 'numbered-list')}
-          className={`px-2 py-1 rounded ${isBlockActive(editor, 'numbered-list') ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
-          title="Numbered List"
-        >
-          1.
-        </button>
-      </div>
-      <Slate
-        editor={editor}
-        initialValue={initialValue}
-        onChange={(value) => {
-          const isAstChange = editor.operations.some((op) => op.type !== 'set_selection');
-          if (isAstChange) {
-            const html = serializeToHtml(value);
-            onChange(html);
-          }
-        }}
-      >
-        <Editable
-          renderElement={renderElement}
-          renderLeaf={renderLeaf}
-          className="p-2 min-h-[100px] prose"
-          placeholder="Enter description..."
-        />
-      </Slate>
-    </div>
-  );
+const isBlockActive = (editor: Editor, format: string) => {
+  const [match] = Editor.nodes(editor, {
+    match: (n) => !Editor.isEditor(n) && 'type' in n && n.type === format,
+  });
+  return !!match;
 };
 
 export default function Providers() {
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [newProvider, setNewProvider] = useState({
     name: '',
-    inputs: [{ name: '', type: 'number', defaultValue: '', description: '' }],
+    inputs: [{ name: '', type: 'text', defaultValue: '', description: '' }],
   });
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [editorStates, setEditorStates] = useState<Descendant[][]>(
+    newProvider.inputs.map((input) => deserialize(input.description))
+  );
+
+  // Initialize Slate editor
+  const editor = useMemo(() => withReact(createEditor()), []);
 
   useEffect(() => {
     const fetchProviders = async () => {
@@ -253,76 +163,138 @@ export default function Providers() {
     fetchProviders();
   }, []);
 
-  const handleAddInputField = () => {
-    if (newProvider.inputs.length < 200) {
-      setNewProvider({
-        ...newProvider,
-        inputs: [...newProvider.inputs, { name: '', type: 'number', defaultValue: '', description: '' }],
-      });
-    } else {
-      setError('Maximum 5 input fields allowed.');
-    }
-  };
-
   const handleInputChange = (index: number, field: string, value: string) => {
     const updatedInputs = [...newProvider.inputs];
     updatedInputs[index] = { ...updatedInputs[index], [field]: value };
     setNewProvider({ ...newProvider, inputs: updatedInputs });
   };
 
-  const handleRemoveInputField = (index: number) => {
-    const updatedInputs = newProvider.inputs.filter((_, i) => i !== index);
-    setNewProvider({ ...newProvider, inputs: updatedInputs });
+  const handleEditorChange = (index: number, value: Descendant[]) => {
+    setEditorStates((prev) => {
+      const newStates = [...prev];
+      newStates[index] = value;
+      return newStates;
+    });
+    const html = serialize(value);
+    handleInputChange(index, 'description', html);
   };
 
-  const handleCreateProvider = async () => {
-    if (!newProvider.name || newProvider.inputs.some((input) => !input.name)) {
-      setError('Please fill in all field names and provider name.');
-      return;
-    }
+  const addInputField = () => {
+    setNewProvider({
+      ...newProvider,
+      inputs: [...newProvider.inputs, { name: '', type: 'text', defaultValue: '', description: '' }],
+    });
+    setEditorStates([...editorStates, [{ type: 'paragraph', children: [{ text: '' }] }]]);
+  };
 
+  const removeInputField = (index: number) => {
+    setNewProvider({
+      ...newProvider,
+      inputs: newProvider.inputs.filter((_, i) => i !== index),
+    });
+    setEditorStates(editorStates.filter((_, i) => i !== index));
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     try {
-      await axios.post('/api/providers', newProvider);
-      const response = await axios.get('/api/providers');
-      setProviders(response.data.providers);
-      setNewProvider({ name: '', inputs: [{ name: '', type: 'number', defaultValue: '', description: '' }] });
+      if (editingProvider) {
+        await axios.put(`/api/providers/${editingProvider._id}`, newProvider);
+        setProviders(
+          providers.map((p) => (p._id === editingProvider._id ? { ...newProvider, _id: editingProvider._id } : p))
+        );
+        setEditingProvider(null);
+      } else {
+        const response = await axios.post('/api/providers', newProvider);
+        setProviders([...providers, response.data.provider]);
+      }
+      setNewProvider({ name: '', inputs: [{ name: '', type: 'text', defaultValue: '', description: '' }] });
+      setEditorStates([[{ type: 'paragraph', children: [{ text: '' }] }]]);
       setError('');
-    } catch (err) {
-      setError('Error creating provider. Please try again.');
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Error saving provider');
     }
   };
 
-  const handleEditProvider = (provider: Provider) => {
+  const handleEdit = (provider: Provider) => {
     setEditingProvider(provider);
+    setNewProvider({ name: provider.name, inputs: provider.inputs });
+    setEditorStates(provider.inputs.map((input) => deserialize(input.description)));
   };
 
-  const handleUpdateProvider = async () => {
-    if (!editingProvider || editingProvider.inputs.some((input) => !input.name)) {
-      setError('Please fill in all field names.');
-      return;
-    }
-
+  const handleDelete = async (id: string) => {
     try {
-      await axios.put('/api/providers', editingProvider);
-      const response = await axios.get('/api/providers');
-      setProviders(response.data.providers);
-      setEditingProvider(null);
+      await axios.delete(`/api/providers/${id}`);
+      setProviders(providers.filter((p) => p._id !== id));
       setError('');
-    } catch (err) {
-      setError('Error updating provider. Please try again.');
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Error deleting provider');
     }
   };
 
-  const handleDeleteProvider = async (name: string) => {
+  const handleDuplicate = async (id: string) => {
     try {
-      await axios.delete('/api/providers', { data: { name } });
-      const response = await axios.get('/api/providers');
-      setProviders(response.data.providers);
+      const response = await axios.post('/api/providers/duplicate', { providerId: id });
+      setProviders([...providers, response.data.provider]);
       setError('');
-    } catch (err) {
-      setError('Error deleting provider. Please try again.');
+    } catch (err: any) {
+      setError(err.response?.data?.error || 'Error duplicating provider');
     }
   };
+
+  // Slate.js render functions
+  const renderElement = useCallback(({ attributes, children, element }: any) => {
+    switch (element.type) {
+      case 'ul':
+        return <ul {...attributes}>{children}</ul>;
+      case 'li':
+        return <li {...attributes}>{children}</li>;
+      default:
+        return <p {...attributes}>{children}</p>;
+    }
+  }, []);
+
+  const renderLeaf = useCallback(({ attributes, children, leaf }: any) => {
+    let el = children;
+    if (leaf.bold) el = <strong>{el}</strong>;
+    if (leaf.italic) el = <em>{el}</em>;
+    if (leaf.underline) el = <u>{el}</u>;
+    return <span {...attributes}>{el}</span>;
+  }, []);
+
+  // Toolbar component
+  const Toolbar = ({ editor }: { editor: ReactEditor }) => (
+    <div className="flex gap-2 mb-2">
+      <button
+        type="button"
+        className={`p-1 rounded ${isMarkActive(editor, 'bold') ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
+        onClick={() => toggleMark(editor, 'bold')}
+      >
+        <strong>B</strong>
+      </button>
+      <button
+        type="button"
+        className={`p-1 rounded ${isMarkActive(editor, 'italic') ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
+        onClick={() => toggleMark(editor, 'italic')}
+      >
+        <em>I</em>
+      </button>
+      <button
+        type="button"
+        className={`p-1 rounded ${isMarkActive(editor, 'underline') ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
+        onClick={() => toggleMark(editor, 'underline')}
+      >
+        <u>U</u>
+      </button>
+      <button
+        type="button"
+        className={`p-1 rounded ${isBlockActive(editor, 'ul') ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
+        onClick={() => toggleBlock(editor, 'ul')}
+      >
+        List
+      </button>
+    </div>
+  );
 
   if (loading) {
     return <div className="p-6 max-w-4xl mx-auto">Loading providers...</div>;
@@ -331,227 +303,160 @@ export default function Providers() {
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <h1 className="text-2xl font-bold mb-4">Manage Providers</h1>
+      <Link href="/" className="text-blue-500 hover:underline mb-4 block">
+        Back to Pricing Tool
+      </Link>
 
-      <div className="mb-4">
-        <Link href="/" className="text-blue-500 hover:underline">
-          Back to Pricing Tool
-        </Link>
-      </div>
+      {error && <div className="mb-4 p-4 bg-red-100 text-red-700 rounded">{error}</div>}
 
-      {error && (
-        <div className="mb-4 p-4 bg-red-100 text-red-700 rounded">{error}</div>
-      )}
-
-      {/* Create New Provider */}
+      {/* Provider Form */}
       <div className="mb-8">
-        <h2 className="text-xl font-semibold mb-2">Add New Provider</h2>
-        <div className="mb-4">
-          <label className="block text-sm font-medium">Provider Name</label>
-          <input
-            type="text"
-            className="mt-1 p-2 border rounded w-full"
-            value={newProvider.name}
-            onChange={(e) => setNewProvider({ ...newProvider, name: e.target.value })}
-          />
-        </div>
-        {newProvider.inputs.map((input, index) => (
-          <div key={index} className="mb-4">
-            <div className="flex items-end gap-4 mb-2">
-              <div>
-                <label className="block text-sm font-medium">Field Name</label>
+        <h2 className="text-xl font-semibold mb-2">{editingProvider ? 'Edit Provider' : 'Add New Provider'}</h2>
+        <form onSubmit={handleSubmit}>
+          <div className="mb-4">
+            <label className="block text-sm font-medium">Provider Name</label>
+            <input
+              type="text"
+              className="p-2 border rounded w-full"
+              value={newProvider.name}
+              onChange={(e) => setNewProvider({ ...newProvider, name: e.target.value })}
+              required
+            />
+          </div>
+          <h3 className="text-lg font-medium mb-2">Input Fields</h3>
+          {newProvider.inputs.map((input, index) => (
+            <div key={index} className="mb-4 border p-4 rounded">
+              <div className="mb-2">
+                <label className="block text-sm font-medium">Input Name</label>
                 <input
                   type="text"
-                  className="mt-1 p-2 border rounded w-full"
+                  className="p-2 border rounded w-full"
                   value={input.name}
                   onChange={(e) => handleInputChange(index, 'name', e.target.value)}
+                  required
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium">Field Type</label>
+              <div className="mb-2">
+                <label className="block text-sm font-medium">Type</label>
                 <select
-                  className="mt-1 p-2 border rounded w-full"
+                  className="p-2 border rounded w-full"
                   value={input.type}
                   onChange={(e) => handleInputChange(index, 'type', e.target.value)}
                 >
-                  <option value="number">Number</option>
                   <option value="text">Text</option>
+                  <option value="number">Number</option>
+                  <option value="dropdown">Dropdown</option>
                 </select>
               </div>
-              <div>
+              <div className="mb-2">
                 <label className="block text-sm font-medium">Default Value</label>
                 <input
                   type="text"
-                  className="mt-1 p-2 border rounded w-full"
+                  className="p-2 border rounded w-full"
                   value={input.defaultValue}
                   onChange={(e) => handleInputChange(index, 'defaultValue', e.target.value)}
                 />
               </div>
-              <button
-                className="bg-red-500 text-white p-2 rounded hover:bg-red-600"
-                onClick={() => handleRemoveInputField(index)}
-              >
-                Remove
-              </button>
-            </div>
-            <div>
-              <label className="block text-sm font-medium">Description</label>
-              <SlateEditor
-                value={input.description}
-                onChange={(value) => handleInputChange(index, 'description', value)}
-                index={index}
-              />
-            </div>
-          </div>
-        ))}
-        <button
-          className="bg-gray-500 text-white p-2 rounded hover:bg-gray-600"
-          onClick={handleAddInputField}
-        >
-          Add Input Field
-        </button>
-        <button
-          className="ml-4 bg-blue-500 text-white p-2 rounded hover:bg-blue-600"
-          onClick={handleCreateProvider}
-        >
-          Create Provider
-        </button>
-      </div>
-
-      {/* Edit Provider */}
-      {editingProvider && (
-        <div className="mb-8">
-          <h2 className="text-xl font-semibold mb-2">Edit Provider: {editingProvider.name}</h2>
-          {editingProvider.inputs.map((input, index) => (
-            <div key={index} className="mb-4">
-              <div className="flex items-end gap-4 mb-2">
-                <div>
-                  <label className="block text-sm font-medium">Field Name</label>
-                  <input
-                    type="text"
-                    className="mt-1 p-2 border rounded w-full"
-                    value={input.name}
-                    onChange={(e) => {
-                      const updatedInputs = [...editingProvider.inputs];
-                      updatedInputs[index].name = e.target.value;
-                      setEditingProvider({ ...editingProvider, inputs: updatedInputs });
-                    }}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium">Field Type</label>
-                  <select
-                    className="mt-1 p-2 border rounded w-full"
-                    value={input.type}
-                    onChange={(e) => {
-                      const updatedInputs = [...editingProvider.inputs];
-                      updatedInputs[index].type = e.target.value;
-                      setEditingProvider({ ...editingProvider, inputs: updatedInputs });
-                    }}
-                  >
-                    <option value="number">Number</option>
-                    <option value="text">Text</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium">Default Value</label>
-                  <input
-                    type="text"
-                    className="mt-1 p-2 border rounded w-full"
-                    value={input.defaultValue}
-                    onChange={(e) => {
-                      const updatedInputs = [...editingProvider.inputs];
-                      updatedInputs[index].defaultValue = e.target.value;
-                      setEditingProvider({ ...editingProvider, inputs: updatedInputs });
-                    }}
-                  />
-                </div>
-                <button
-                  className="bg-red-500 text-white p-2 rounded hover:bg-red-600"
-                  onClick={() => {
-                    const updatedInputs = editingProvider.inputs.filter((_, i) => i !== index);
-                    setEditingProvider({ ...editingProvider, inputs: updatedInputs });
-                  }}
-                >
-                  Remove
-                </button>
-              </div>
-              <div>
+              <div className="mb-2">
                 <label className="block text-sm font-medium">Description</label>
-                <SlateEditor
-                  value={input.description}
-                  onChange={(value) => {
-                    const updatedInputs = [...editingProvider.inputs];
-                    updatedInputs[index].description = value;
-                    setEditingProvider({ ...editingProvider, inputs: updatedInputs });
-                  }}
-                  index={index}
-                />
+                <div className="border rounded p-2 bg-white slate-editor">
+                  <Slate
+                    editor={editor}
+                    initialValue={editorStates[index]}
+                    onChange={(value) => handleEditorChange(index, value)}
+                  >
+                    <Toolbar editor={editor} />
+                    <Editable
+                      renderElement={renderElement}
+                      renderLeaf={renderLeaf}
+                      placeholder="Enter description..."
+                      className="min-h-[100px]"
+                      onKeyDown={(event) => {
+                        if (event.ctrlKey || event.metaKey) {
+                          switch (event.key) {
+                            case 'b':
+                              event.preventDefault();
+                              toggleMark(editor, 'bold');
+                              break;
+                            case 'i':
+                              event.preventDefault();
+                              toggleMark(editor, 'italic');
+                              break;
+                            case 'u':
+                              event.preventDefault();
+                              toggleMark(editor, 'underline');
+                              break;
+                          }
+                        }
+                      }}
+                    />
+                  </Slate>
+                </div>
               </div>
+              <button
+                type="button"
+                className="bg-red-500 text-white p-1 rounded hover:bg-red-600"
+                onClick={() => removeInputField(index)}
+              >
+                Remove Input
+              </button>
             </div>
           ))}
           <button
-            className="bg-gray-500 text-white p-2 rounded hover:bg-gray-600"
-            onClick={() => {
-              if (editingProvider.inputs.length < 5) {
-                setEditingProvider({
-                  ...editingProvider,
-                  inputs: [...editingProvider.inputs, { name: '', type: 'number', defaultValue: '', description: '' }],
-                });
-              } else {
-                setError('Maximum 5 input fields allowed.');
-              }
-            }}
+            type="button"
+            className="bg-blue-500 text-white p-2 rounded hover:bg-blue-600 mb-4"
+            onClick={addInputField}
           >
             Add Input Field
           </button>
           <button
-            className="ml-4 bg-blue-500 text-white p-2 rounded hover:bg-blue-600"
-            onClick={handleUpdateProvider}
+            type="submit"
+            className="bg-green-500 text-white p-2 rounded hover:bg-green-600"
           >
-            Update Provider
+            {editingProvider ? 'Update Provider' : 'Create Provider'}
           </button>
-          <button
-            className="ml-4 bg-gray-500 text-white p-2 rounded hover:bg-gray-600"
-            onClick={() => setEditingProvider(null)}
-          >
-            Cancel
-          </button>
-        </div>
-      )}
+        </form>
+      </div>
 
-      {/* List Providers */}
+      {/* Provider List */}
       <div>
         <h2 className="text-xl font-semibold mb-2">Existing Providers</h2>
         {providers.length === 0 ? (
-          <p>No providers added yet.</p>
+          <p>No providers found.</p>
         ) : (
           <table className="w-full border-collapse border">
             <thead>
               <tr>
-                <th className="border p-2">Provider Name</th>
-                <th className="border p-2">Input Fields</th>
+                <th className="border p-2">Name</th>
+                <th className="border p-2">Inputs</th>
                 <th className="border p-2">Actions</th>
               </tr>
             </thead>
             <tbody>
               {providers.map((provider) => (
-                <tr key={provider.name}>
+                <tr key={provider._id}>
                   <td className="border p-2">{provider.name}</td>
                   <td className="border p-2">
                     {provider.inputs.map((input) => input.name).join(', ')}
                   </td>
-                  <td className="border p-2">
+                  <td className="border p-2 flex gap-2">
                     <button
-                      className="bg-yellow-500 text-white p-1 rounded hover:bg-yellow-600 mr-2"
-                      onClick={() => handleEditProvider(provider)}
+                      className="bg-blue-500 text-white p-1 rounded hover:bg-blue-600"
+                      onClick={() => handleEdit(provider)}
                     >
                       Edit
                     </button>
                     <button
                       className="bg-red-500 text-white p-1 rounded hover:bg-red-600"
-                      onClick={() => handleDeleteProvider(provider.name)}
+                      onClick={() => handleDelete(provider._id)}
                     >
                       Delete
+                    </button>
+                    <button
+                      className="bg-yellow-500 text-white p-1 rounded hover:bg-yellow-600"
+                      onClick={() => handleDuplicate(provider._id)}
+                    >
+                      Duplicate
                     </button>
                   </td>
                 </tr>
@@ -565,16 +470,46 @@ export default function Providers() {
         .prose {
           max-width: none;
         }
-        .prose p {
-          margin: 0 0 8px 0;
+        .prose table {
+          width: 100%;
+          border-collapse: collapse;
+          margin: 16px 0;
+          font-size: 0.85rem;
         }
-        .prose ul,
-        .prose ol {
-          margin: 8px 0;
+        .prose th,
+        .prose td {
+          border: 1px solid #e5e7eb;
+          padding: 12px;
+          text-align: left;
+          vertical-align: top;
+        }
+        .prose th {
+          background-color: #f3f4f6;
+          font-weight: 600;
+        }
+        .flex {
+          display: flex;
+          gap: 8px;
+        }
+        .slate-editor {
+          min-height: 100px;
+          padding: 8px;
+          border: 1px solid #e5e7eb;
+          border-radius: 4px;
+          background-color: #fff;
+        }
+        .slate-editor :global(strong) {
+          font-weight: 700;
+        }
+        .slate-editor :global(em) {
+          font-style: italic;
+        }
+        .slate-editor :global(u) {
+          text-decoration: underline;
+        }
+        .slate-editor :global(ul) {
+          list-style-type: disc;
           padding-left: 20px;
-        }
-        .prose li {
-          margin: 4px 0;
         }
       `}</style>
     </div>
