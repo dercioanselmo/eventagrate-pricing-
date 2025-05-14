@@ -65,6 +65,10 @@ const deserialize = (html: string): Descendant[] => {
       ALLOWED_TAGS: ['p', 'strong', 'em', 'u', 'ul', 'li'],
       ALLOWED_ATTR: [],
     }) : (html || '<p></p>');
+    // Ensure document is available (client-side only)
+    if (typeof document === 'undefined') {
+      return [{ type: 'paragraph', children: [{ text: '' }] }];
+    }
     const div = document.createElement('div');
     div.innerHTML = sanitized;
     const nodes: Descendant[] = [];
@@ -151,11 +155,16 @@ export default function Providers() {
   });
   const [editingProvider, setEditingProvider] = useState<Provider | null>(null);
   const [editorStates, setEditorStates] = useState<Descendant[][]>(
-    newProvider.inputs.map((input) => deserialize(input.description))
+    newProvider.inputs.map(() => [{ type: 'paragraph', children: [{ text: '' }] }])
   );
 
   // Initialize Slate editor
   const editor = useMemo(() => withReact(createEditor()), []);
+
+  // Initialize editorStates client-side
+  useEffect(() => {
+    setEditorStates(newProvider.inputs.map((input) => deserialize(input.description)));
+  }, [newProvider.inputs]);
 
   useEffect(() => {
     const fetchProviders = async () => {
@@ -236,7 +245,8 @@ export default function Providers() {
       setProviders(providers.filter((p) => p._id !== id));
       setError('');
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Error deleting provider');
+      console.error('Delete error:', err);
+      setError(err.response?.data?.error || 'Error deleting provider. Please ensure the delete API is available.');
     }
   };
 
@@ -245,8 +255,6 @@ export default function Providers() {
       const response = await axios.post('/api/providers/duplicate', { providerId: id });
       const newProvider = response.data.provider;
       setProviders([...providers, newProvider]);
-      setError('');
-      // Safely update editor states
       setEditorStates(newProvider.inputs.map((input: ProviderInput) => {
         try {
           return deserialize(input.description);
@@ -254,8 +262,10 @@ export default function Providers() {
           return [{ type: 'paragraph', children: [{ text: '' }] }];
         }
       }));
+      setError('');
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Error duplicating provider');
+      console.error('Duplicate error:', err);
+      setError(err.response?.data?.error || 'Error duplicating provider. Please ensure the duplicate API is available.');
     }
   };
 
@@ -531,4 +541,4 @@ export default function Providers() {
       `}</style>
     </div>
   );
-}                               
+}
