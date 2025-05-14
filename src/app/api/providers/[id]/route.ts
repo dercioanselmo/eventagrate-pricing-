@@ -6,7 +6,7 @@ const client = new MongoClient(uri);
 
 export async function DELETE(req: NextRequest, context: { params: Promise<{ id: string }> }) {
   try {
-    const { id } = await context.params; // Await params to resolve the Promise
+    const { id } = await context.params;
 
     if (!id || !ObjectId.isValid(id)) {
       return NextResponse.json({ error: 'Invalid provider ID' }, { status: 400 });
@@ -25,6 +25,48 @@ export async function DELETE(req: NextRequest, context: { params: Promise<{ id: 
     return NextResponse.json({ message: 'Provider deleted successfully' }, { status: 200 });
   } catch (error: any) {
     console.error('Error deleting provider:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  } finally {
+    await client.close();
+  }
+}
+
+export async function PUT(req: NextRequest, context: { params: Promise<{ id: string }> }) {
+  try {
+    const { id } = await context.params;
+    const { name, inputs, pricing } = await req.json();
+
+    if (!id || !ObjectId.isValid(id)) {
+      return NextResponse.json({ error: 'Invalid provider ID' }, { status: 400 });
+    }
+
+    if (!name || !inputs || !Array.isArray(inputs)) {
+      return NextResponse.json({ error: 'Invalid provider data' }, { status: 400 });
+    }
+
+    await client.connect();
+    const db = client.db('eventagrate');
+    const providersCollection = db.collection('providers');
+
+    const updateData = {
+      name,
+      inputs,
+      pricing: pricing || {},
+      updatedAt: new Date(),
+    };
+
+    const result = await providersCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updateData }
+    );
+
+    if (result.matchedCount === 0) {
+      return NextResponse.json({ error: 'Provider not found' }, { status: 404 });
+    }
+
+    return NextResponse.json({ message: 'Provider updated successfully', provider: { _id: id, ...updateData } }, { status: 200 });
+  } catch (error: any) {
+    console.error('Error updating provider:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   } finally {
     await client.close();
