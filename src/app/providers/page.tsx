@@ -159,8 +159,7 @@ export default function Providers() {
   );
   // Initialize an array of Slate editors, one per input
   const editors = useMemo(
-    () =>
-      newProvider.inputs.map(() => withReact(createEditor())),
+    () => newProvider.inputs.map(() => withReact(createEditor())),
     [newProvider.inputs.length]
   );
 
@@ -213,9 +212,6 @@ export default function Providers() {
       inputs: newProvider.inputs.filter((_, i) => i !== index),
     });
     setEditorStates(editorStates.filter((_, i) => i !== index));
-    // Destroy the editor to prevent memory leaks
-    const editor = editors[index];
-    editor.destroy();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
