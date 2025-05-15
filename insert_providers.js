@@ -1,7 +1,7 @@
 const { MongoClient } = require('mongodb');
 
 //const uri = 'mongodb+srv://<username>:<password>@cluster0.mongodb.net/eventagrate?retryWrites=true&w=majority';
-const uri = 'mongodb://admin:p4ss12345@3.28.242.172:27017/pricing?authSource=admin';
+const uri = 'mongodb://admin:p4ss12345@3.28.242.172:27017/eventagrate?authSource=admin';
 const client = new MongoClient(uri);
 
 async function insertProviders() {

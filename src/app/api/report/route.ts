@@ -14,7 +14,7 @@ interface Provider {
   _id: string;
   name: string;
   inputs: ProviderInput[];
-  pricing?: { [key: string]: { price: string; url: string } }; // Added for stored pricing
+  pricing?: { [key: string]: { price: string; url: string } };
 }
 
 interface SelectedProvider {
@@ -53,7 +53,7 @@ async function connectToMongoDB(): Promise<MongoClient> {
 // Fallback table generator
 const generateFallbackTable = (provider: SelectedProvider, pricingUrl: string): string => {
   const rows = Object.entries(provider.inputs)
-    .map(([key, value]) => `| ${key} | ${value} | Unknown | Unknown | - | ${pricingUrl} |`)
+    .map(([key, value]) => `| ${key} | ${value ?? ''} | Unknown | Unknown | - | ${pricingUrl} |`)
     .join('\n');
   return `
 ## Provider: ${provider.provider.name}
@@ -104,13 +104,13 @@ export async function POST(request: NextRequest) {
       if (storedProvider?.pricing) {
         const pricingRows = Object.entries(provider.inputs)
           .map(([key, value]) => {
-            const pricingData = storedProvider.pricing?.[`${key}:${value}`];
+            const displayValue = value ?? '';
+            const pricingData = storedProvider.pricing?.[`${key}:${displayValue}`];
             if (pricingData) {
               const { price, url } = pricingData;
               let estimatedCost = 'Included';
               let costCalculation = '-';
               if (price && !price.includes('Included')) {
-                // Example: "$0.621/hour" or "$0.14/GB/month"
                 if (price.includes('/hour')) {
                   const hourlyRate = parseFloat(price.replace('$', '').replace('/hour', ''));
                   estimatedCost = (hourlyRate * 730).toFixed(2);
@@ -122,18 +122,18 @@ export async function POST(request: NextRequest) {
                   costCalculation = `${price} × ${gb} GB`;
                 }
               }
-              return `| ${key} | ${value} | ${price} | $${estimatedCost} | ${costCalculation} | ${url} |`;
+              return `| ${key} | ${displayValue} | ${price} | $${estimatedCost} | ${costCalculation} | ${url} |`;
             }
             pricingFound = false;
-            return null;
+            return `| ${key} | ${displayValue} | Unknown | Unknown | - | - |`;
           })
-          .filter((row) => row !== null)
           .join('\n');
 
         if (pricingFound) {
           const totalCost = Object.entries(provider.inputs)
             .reduce((sum, [key, value]) => {
-              const pricingData = storedProvider.pricing?.[`${key}:${value}`];
+              const displayValue = value ?? '';
+              const pricingData = storedProvider.pricing?.[`${key}:${displayValue}`];
               if (pricingData && pricingData.price && !pricingData.price.includes('Included')) {
                 if (pricingData.price.includes('/hour')) {
                   const hourlyRate = parseFloat(pricingData.price.replace('$', '').replace('/hour', ''));
@@ -244,8 +244,8 @@ Generate a report in Markdown format with:
           const rows = providerTable.split('\n').filter((line) => line.startsWith('|') && !line.includes('Total'));
           for (const row of rows) {
             const [, input, value, price, , , url] = row.split('|').map((s) => s.trim());
-            if (input && value && price && url) {
-              pricing[`${input}:${value}`] = { price, url };
+            if (input && price && url) {
+              pricing[`${input}:${value || ''}`] = { price, url };
             }
           }
           await providersCollection.updateOne(

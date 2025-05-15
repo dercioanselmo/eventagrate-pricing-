@@ -157,9 +157,12 @@ export default function Providers() {
   const [editorStates, setEditorStates] = useState<Descendant[][]>(
     newProvider.inputs.map(() => [{ type: 'paragraph', children: [{ text: '' }] }])
   );
-
-  // Initialize Slate editor
-  const editor = useMemo(() => withReact(createEditor()), []);
+  // Initialize an array of Slate editors, one per input
+  const editors = useMemo(
+    () =>
+      newProvider.inputs.map(() => withReact(createEditor())),
+    [newProvider.inputs.length]
+  );
 
   // Initialize editorStates client-side
   useEffect(() => {
@@ -210,6 +213,9 @@ export default function Providers() {
       inputs: newProvider.inputs.filter((_, i) => i !== index),
     });
     setEditorStates(editorStates.filter((_, i) => i !== index));
+    // Destroy the editor to prevent memory leaks
+    const editor = editors[index];
+    editor.destroy();
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -388,11 +394,11 @@ export default function Providers() {
                 <label className="block text-sm font-medium">Description</label>
                 <div className="border rounded p-2 bg-white slate-editor">
                   <Slate
-                    editor={editor}
+                    editor={editors[index]}
                     initialValue={editorStates[index]}
                     onChange={(value) => handleEditorChange(index, value)}
                   >
-                    <Toolbar editor={editor} />
+                    <Toolbar editor={editors[index]} />
                     <Editable
                       renderElement={renderElement}
                       renderLeaf={renderLeaf}
@@ -403,15 +409,15 @@ export default function Providers() {
                           switch (event.key) {
                             case 'b':
                               event.preventDefault();
-                              toggleMark(editor, 'bold');
+                              toggleMark(editors[index], 'bold');
                               break;
                             case 'i':
                               event.preventDefault();
-                              toggleMark(editor, 'italic');
+                              toggleMark(editors[index], 'italic');
                               break;
                             case 'u':
                               event.preventDefault();
-                              toggleMark(editor, 'underline');
+                              toggleMark(editors[index], 'underline');
                               break;
                           }
                         }
