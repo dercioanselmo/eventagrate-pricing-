@@ -1,134 +1,73 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb } from '@/lib/mongodb';
+import { MongoClient, ObjectId } from 'mongodb';
 
-interface ProviderInput {
-  name: string;
-  type: string;
-  defaultValue: string;
-  description: string;
-}
+const uri = process.env.MONGODB_URI;
+let mongoClient: MongoClient | null = null;
 
-interface Provider {
-  name: string;
-  inputs: ProviderInput[];
-}
-
-export async function GET() {
-  try {
-    const db = await getDb();
-    const providers = await db.collection('providers').find({}).toArray();
-    return NextResponse.json({ providers }, { status: 200 });
-  } catch (error) {
-    console.error('GET /api/providers error:', error);
-    return NextResponse.json({ error: 'Failed to fetch providers' }, { status: 500 });
+async function connectToMongoDB(): Promise<MongoClient> {
+  if (!uri) {
+    throw new Error('MONGODB_URI is not defined in .env.local');
   }
+  if (!mongoClient) {
+    mongoClient = new MongoClient(uri);
+    await mongoClient.connect();
+  }
+  return mongoClient;
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const provider: Provider = await request.json();
-    console.log('POST /api/providers received:', provider);
-
-    if (!provider) {
-      return NextResponse.json({ error: 'No provider data provided' }, { status: 400 });
-    }
-    if (!provider.name) {
-      return NextResponse.json({ error: 'Provider name is required' }, { status: 400 });
-    }
-    if (!provider.inputs || !Array.isArray(provider.inputs)) {
-      return NextResponse.json({ error: 'Inputs must be a non-empty array' }, { status: 400 });
-    }
-    if (provider.inputs.length === 0) {
-      return NextResponse.json({ error: 'At least one input is required' }, { status: 400 });
-    }
-    if (provider.inputs.some((input) => !input.name)) {
-      return NextResponse.json({ error: 'All input fields must have a name' }, { status: 400 });
+    const body = await request.json();
+    if (!body.name || !body.inputs || !Array.isArray(body.inputs)) {
+      return NextResponse.json({ error: 'Provider name and inputs are required' }, { status: 400 });
     }
 
-    const db = await getDb();
-    const existingProvider = await db.collection('providers').findOne({ name: provider.name });
-    if (existingProvider) {
-      return NextResponse.json({ error: `Provider '${provider.name}' already exists` }, { status: 409 });
-    }
+    const client = await connectToMongoDB();
+    const db = client.db('eventagrate');
+    const providersCollection = db.collection('providers');
 
-    await db.collection('providers').insertOne(provider);
-    return NextResponse.json({ message: 'Provider created' }, { status: 201 });
+    const provider = {
+      name: body.name,
+      inputs: body.inputs.map((input: any) => ({
+        name: input.name || '',
+        type: input.type || 'text',
+        defaultValue: input.defaultValue || '',
+        description: input.description || '',
+      })),
+      pricing: body.pricing || {},
+      createdAt: new Date(),
+    };
+
+    const result = await providersCollection.insertOne(provider);
+    const insertedProvider = {
+      _id: result.insertedId.toString(),
+      ...provider,
+    };
+
+    return NextResponse.json({ provider: insertedProvider }, { status: 201 });
   } catch (error: any) {
     console.error('POST /api/providers error:', error);
-    return NextResponse.json(
-      { error: `Failed to create provider: ${error.message || 'Unknown error'}` },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: error.message || 'Error creating provider' }, { status: 500 });
   }
 }
 
-export async function PUT(request: NextRequest) {
+export async function GET() {
   try {
-    const provider: Provider & { _id?: any } = await request.json();
-    console.log('PUT /api/providers received:', provider);
+    const client = await connectToMongoDB();
+    const db = client.db('eventagrate');
+    const providersCollection = db.collection('providers');
 
-    if (!provider) {
-      return NextResponse.json({ error: 'No provider data provided' }, { status: 400 });
-    }
-    if (!provider.name) {
-      return NextResponse.json({ error: 'Provider name is required' }, { status: 400 });
-    }
-    if (!provider.inputs || !Array.isArray(provider.inputs)) {
-      return NextResponse.json({ error: 'Inputs must be a non-empty array' }, { status: 400 });
-    }
-    if (provider.inputs.length === 0) {
-      return NextResponse.json({ error: 'At least one input is required' }, { status: 400 });
-    }
-    if (provider.inputs.some((input) => !input.name)) {
-      return NextResponse.json({ error: 'All input fields must have a name' }, { status: 400 });
-    }
+    const providers = await providersCollection.find({}).toArray();
+    const formattedProviders = providers.map((provider) => ({
+      _id: provider._id.toString(),
+      name: provider.name,
+      inputs: provider.inputs,
+      pricing: provider.pricing,
+    }));
 
-    // Exclude _id from the update
-    const { _id, ...updateData } = provider;
-
-    const db = await getDb();
-    const result = await db.collection('providers').updateOne(
-      { name: provider.name },
-      { $set: updateData },
-      { upsert: false }
-    );
-
-    if (result.matchedCount === 0) {
-      return NextResponse.json({ error: `Provider '${provider.name}' not found` }, { status: 404 });
-    }
-
-    return NextResponse.json({ message: 'Provider updated' }, { status: 200 });
+    return NextResponse.json({ providers: formattedProviders }, { status: 200 });
   } catch (error: any) {
-    console.error('PUT /api/providers error:', error);
-    return NextResponse.json(
-      { error: `Failed to update provider: ${error.message || 'Unknown error'}` },
-      { status: 500 }
-    );
-  }
-}
-
-export async function DELETE(request: NextRequest) {
-  try {
-    const { name } = await request.json();
-    console.log('DELETE /api/providers received:', { name });
-
-    if (!name) {
-      return NextResponse.json({ error: 'Provider name is required' }, { status: 400 });
-    }
-
-    const db = await getDb();
-    const result = await db.collection('providers').deleteOne({ name });
-
-    if (result.deletedCount === 0) {
-      return NextResponse.json({ error: `Provider '${name}' not found` }, { status: 404 });
-    }
-
-    return NextResponse.json({ message: 'Provider deleted' }, { status: 200 });
-  } catch (error: any) {
-    console.error('DELETE /api/providers error:', error);
-    return NextResponse.json(
-      { error: `Failed to delete provider: ${error.message || 'Unknown error'}` },
-      { status: 500 }
-    );
+    console.error('GET /api/providers error:', error);
+    return NextResponse.json({ error: error.message || 'Error fetching providers' }, { status: 500 });
   }
 }

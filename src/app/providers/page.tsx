@@ -172,9 +172,11 @@ export default function Providers() {
     const fetchProviders = async () => {
       try {
         const response = await axios.get('/api/providers');
-        setProviders(response.data.providers);
+        console.log('GET /api/providers response:', response.data); // Debug log
+        setProviders(Array.isArray(response.data.providers) ? response.data.providers : []);
         setLoading(false);
       } catch (err) {
+        console.error('Fetch providers error:', err);
         setError('Error fetching providers. Please try again.');
         setLoading(false);
       }
@@ -217,21 +219,31 @@ export default function Providers() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      console.log('Submitting provider:', newProvider); // Debug log
       if (editingProvider) {
-        await axios.put(`/api/providers/${editingProvider._id}`, newProvider);
+        const response = await axios.put(`/api/providers/${editingProvider._id}`, newProvider);
+        console.log('PUT response:', response.data); // Debug log
+        if (!response.data.provider || !response.data.provider._id || !response.data.provider.name) {
+          throw new Error('Invalid response: Missing provider data');
+        }
         setProviders(
-          providers.map((p) => (p._id === editingProvider._id ? { ...newProvider, _id: editingProvider._id } : p))
+          providers.map((p) => (p._id === editingProvider._id ? { ...response.data.provider } : p))
         );
         setEditingProvider(null);
       } else {
         const response = await axios.post('/api/providers', newProvider);
+        console.log('POST response:', response.data); // Debug log
+        if (!response.data.provider || !response.data.provider._id || !response.data.provider.name) {
+          throw new Error('Invalid response: Missing provider data');
+        }
         setProviders([...providers, response.data.provider]);
       }
       setNewProvider({ name: '', inputs: [{ name: '', type: 'text', defaultValue: '', description: '' }] });
       setEditorStates([[{ type: 'paragraph', children: [{ text: '' }] }]]);
       setError('');
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Error saving provider');
+      console.error('Submit error:', err);
+      setError(err.response?.data?.error || err.message || 'Error saving provider');
     }
   };
 
@@ -255,7 +267,11 @@ export default function Providers() {
   const handleDuplicate = async (id: string) => {
     try {
       const response = await axios.post('/api/providers/duplicate', { providerId: id });
+      console.log('Duplicate response:', response.data); // Debug log
       const newProvider = response.data.provider;
+      if (!newProvider || !newProvider._id || !newProvider.name) {
+        throw new Error('Invalid response: Missing provider data');
+      }
       setProviders([...providers, newProvider]);
       setEditorStates(newProvider.inputs.map((input: ProviderInput) => {
         try {
@@ -462,34 +478,36 @@ export default function Providers() {
               </tr>
             </thead>
             <tbody>
-              {providers.map((provider) => (
-                <tr key={provider._id}>
-                  <td className="border p-2">{provider.name}</td>
-                  <td className="border p-2">
-                    {provider.inputs.map((input) => input.name).join(', ')}
-                  </td>
-                  <td className="border p-2 flex gap-2">
-                    <button
-                      className="bg-blue-500 text-white p-1 rounded hover:bg-blue-600"
-                      onClick={() => handleEdit(provider)}
-                    >
-                      Edit
-                    </button>
-                    <button
-                      className="bg-red-500 text-white p-1 rounded hover:bg-red-600"
-                      onClick={() => handleDelete(provider._id)}
-                    >
-                      Delete
-                    </button>
-                    <button
-                      className="bg-yellow-500 text-white p-1 rounded hover:bg-yellow-600"
-                      onClick={() => handleDuplicate(provider._id)}
-                    >
-                      Duplicate
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {providers
+                .filter((provider): provider is Provider => provider && provider._id && provider.name)
+                .map((provider) => (
+                  <tr key={provider._id}>
+                    <td className="border p-2">{provider.name}</td>
+                    <td className="border p-2">
+                      {provider.inputs.map((input) => input.name).join(', ')}
+                    </td>
+                    <td className="border p-2 flex gap-2">
+                      <button
+                        className="bg-blue-500 text-white p-1 rounded hover:bg-blue-600"
+                        onClick={() => handleEdit(provider)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        className="bg-red-500 text-white p-1 rounded hover:bg-red-600"
+                        onClick={() => handleDelete(provider._id)}
+                      >
+                        Delete
+                      </button>
+                      <button
+                        className="bg-yellow-500 text-white p-1 rounded hover:bg-yellow-600"
+                        onClick={() => handleDuplicate(provider._id)}
+                      >
+                        Duplicate
+                      </button>
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </table>
         )}
